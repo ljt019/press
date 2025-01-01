@@ -244,7 +244,11 @@ async fn main() -> Result<(), AppError> {
     let final_prompt = format!(
         "<code_files>{}</code_files> \
          <user_prompt>{}</user_prompt>
-         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags if you want to create a new file send it as <new_file path=\"src/yourdesiredpath/filename.ext\"><![CDATA[Your file content here]]></new_file>, all paths must be relative to the src directory. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
+         <important>Respond only with updated files using these formats:
+1. Modify existing file: <file name=\"filename.ext\"><![CDATA[content]]></file>
+2. Create new file: <new_file path=\"src/relative/path/filename.ext\"><![CDATA[content]]></new_file>
+3. Non-code response: <response_txt><![CDATA[message]]></response_txt>
+All paths must be relative to src directory.</important>",
         output_file_text, args.prompt
     );
 
