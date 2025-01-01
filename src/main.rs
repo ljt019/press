@@ -190,12 +190,12 @@ async fn main() {
 
     let deepseek_api = DeepSeekApi::new(api_key);
     let final_prompt = format!(
-    "<code_files>{}</code_files> \
+        "<code_files>{}</code_files> \
      <user_prompt>{}</user_prompt>
      <important>Only respond with the updated text files, \
-     and keep them surrounded by their file name in xml tags with CDATA sections. If you must send a response other than code files, put it in <response.txt><![CDATA[Your response here]]></response.txt> tags.</important>",
-    output_file_text, args.prompt
-);
+         and keep them surrounded by their file name in xml tags like <filename.file_extension> with CDATA sections. If you must send a response other than code files, put it in <response.txt><![CDATA[Your response here]]></response.txt> tags.</important>",
+        output_file_text, args.prompt
+    );
 
     let spinner = create_spinner();
 
