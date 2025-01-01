@@ -25,8 +25,8 @@ struct Args {
     #[arg(short, long, help = "Prompt for the AI", required = true)]
     prompt: String,
 
-    #[arg(short, long, help = "System prompt for the AI")]
-    system_prompt: Option<String>,
+    #[arg(short, long, help = "System prompt for the AI", default_value_t = ("You are a helpful assistant").to_string())]
+    system_prompt: String,
 
     #[arg(
         short,
@@ -154,41 +154,21 @@ async fn main() {
         "Preparing prompt for AI".italic().bright_white()
     );
 
-    // Enhanced default system prompt
-    let default_system_prompt = "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines:
-
-1. **Output Format**: 
-   - Provide only the raw text of the updated code without any additional formatting.
-   - Enclose each file's content within XML tags named after the file. For example:
-     ```xml
-     <filename>Updated code content here</filename>
-     ```
-
-2. **Formatting Restrictions**:
-   - Do not include any code block delimiters such as ``` or markdown formatting.
-   - Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
-
-3. **Code Integrity**:
-   - Ensure that the syntax and structure of the code remain correct and functional.
-   - Only make necessary improvements or refactorings based on the user's prompt.
-";
-
-    // Use the user-provided system prompt if available, else use the default
-    let combined_system_prompt = match args.system_prompt {
-        Some(custom_prompt) => format!("{}\n{}", custom_prompt, default_system_prompt),
-        None => default_system_prompt.to_string(),
-    };
-
     let deepseek_api = DeepSeekApi::new(api_key);
     let final_prompt = format!(
         "<code_files>{}</code_files> \
-         <user_prompt>{}</user_prompt>",
+         <user_prompt>{}</user_prompt>
+         <important>Only respond with the updated text files, \
+         and keep them surrounded by their file name in xml tags, if you must send a response other than code files put it in <response> xml tags </important>",
         output_file_text, args.prompt
     );
 
     let spinner = create_spinner();
+
+    let system_prompt = args.system_prompt;
+
     let response = deepseek_api
-        .call_deepseek(&combined_system_prompt, &final_prompt)
+        .call_deepseek(&system_prompt, &final_prompt)
         .await;
 
     spinner.finish_and_clear();
