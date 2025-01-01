@@ -1,54 +1,21 @@
 mod deep_seek_api;
+mod errors;
 
 use clap::Parser;
 use colored::*;
-use deep_seek_api::{DeepSeekApi, DeepSeekError};
+use deep_seek_api::DeepSeekApi;
 use env_logger;
+use errors::AppError;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::{
-    env, fmt,
+    env,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio;
-
-#[derive(Debug)]
-enum AppError {
-    IoError(std::io::Error),
-    DeepSeekError(DeepSeekError),
-    XmlError(quick_xml::Error),
-}
-
-impl fmt::Display for AppError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AppError::IoError(e) => write!(f, "IO error: {}", e),
-            AppError::DeepSeekError(e) => write!(f, "DeepSeek API error: {}", e),
-            AppError::XmlError(e) => write!(f, "XML parsing error: {}", e),
-        }
-    }
-}
-
-impl From<std::io::Error> for AppError {
-    fn from(err: std::io::Error) -> Self {
-        AppError::IoError(err)
-    }
-}
-
-impl From<DeepSeekError> for AppError {
-    fn from(err: DeepSeekError) -> Self {
-        AppError::DeepSeekError(err)
-    }
-}
-
-impl From<quick_xml::Error> for AppError {
-    fn from(err: quick_xml::Error) -> Self {
-        AppError::XmlError(err)
-    }
-}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -122,8 +89,10 @@ async fn save_individual_files(
     reader.config_mut().trim_text(true);
 
     let mut current_filename: Option<String> = None;
+    let mut current_path: Option<String> = None;
     let mut current_content = String::new();
     let mut saved_files = 0;
+    let mut response_txt_content = String::new();
 
     let mut buf = Vec::new();
     loop {
@@ -134,6 +103,20 @@ async fn save_individual_files(
                         if attr.key.as_ref() == b"name" {
                             let value = attr.unescape_value()?;
                             current_filename = Some(value.into_owned());
+                        }
+                    }
+                }
+            }
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"new_file" => {
+                for attr in e.attributes().with_checks(false) {
+                    if let Ok(attr) = attr {
+                        if attr.key.as_ref() == b"name" {
+                            let value = attr.unescape_value()?;
+                            current_filename = Some(value.into_owned());
+                        }
+                        if attr.key.as_ref() == b"path" {
+                            let value = attr.unescape_value()?;
+                            current_path = Some(value.into_owned());
                         }
                     }
                 }
@@ -168,7 +151,28 @@ async fn save_individual_files(
                     current_content.clear();
                 }
             }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {}
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"new_file" => {
+                if let Some(filename) = current_filename.take() {
+                    let file_path = if let Some(path) = current_path.take() {
+                        PathBuf::from(path)
+                    } else {
+                        output_directory.join(&filename)
+                    };
+                    if let Some(parent) = file_path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tokio::fs::write(&file_path, current_content.trim().as_bytes()).await?;
+                    saved_files += 1;
+                    current_content.clear();
+                }
+            }
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"response_txt" => {
+                current_content.clear();
+            }
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
+                response_txt_content = current_content.clone();
+                current_content.clear();
+            }
             Ok(Event::Eof) => break,
             Err(e) => {
                 log::error!("Error parsing XML: {:?}", e);
@@ -177,6 +181,11 @@ async fn save_individual_files(
             _ => (),
         }
         buf.clear();
+    }
+
+    if !response_txt_content.is_empty() {
+        let response_txt_path = output_directory.join("response.txt");
+        tokio::fs::write(response_txt_path, response_txt_content.as_bytes()).await?;
     }
 
     let log_file_path = output_directory.join("raw_response.log");
@@ -246,7 +255,7 @@ async fn main() -> Result<(), AppError> {
     let final_prompt = format!(
         "<code_files>{}</code_files> \
          <user_prompt>{}</user_prompt>
-         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
+         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags if you want to create a new file send it as <new_file name=\"filename.ext\" path=\"filepath\"><![CDATA[Your file content here]]></new_file>. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
         output_file_text, args.prompt
     );
 

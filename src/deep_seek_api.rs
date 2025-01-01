@@ -1,18 +1,8 @@
+use crate::errors::DeepSeekError;
 use reqwest::Client;
 use serde_json::{json, Value};
-use thiserror::Error;
 
 const BASE_URL: &str = "https://api.deepseek.com";
-
-#[derive(Error, Debug)]
-pub enum DeepSeekError {
-    #[error("HTTP request failed: {0}")]
-    RequestError(#[from] reqwest::Error),
-    #[error("JSON parsing failed: {0}")]
-    JsonError(#[from] serde_json::Error),
-    #[error("API returned an error: {0}")]
-    ApiError(String),
-}
 
 pub struct DeepSeekApi {
     client: Client,
