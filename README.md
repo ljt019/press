@@ -51,14 +51,6 @@ press --directories path/to/dir1 path/to/dir2 --prompt "Your custom prompt here"
 press --directories src tests --prompt "Refactor the code for better readability" --output-directory ./output
 ```
 
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 ## Acknowledgments
 
 - **DeepSeek**: For providing the AI API that powers this tool.
