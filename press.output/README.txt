@@ -51,6 +51,11 @@ press --paths path/to/dir1 path/to/file1 --prompt "Your custom prompt here" --ap
 press --paths src tests main.rs --prompt "Refactor the code for better readability" --output-directory ./output
 ```
 
+## Acknowledgments
+
+- **DeepSeek**: For providing the AI API that powers this tool.
+- **Rust Community**: For the amazing ecosystem and libraries that made this project possible.
+
 ---
 
 🍇 **Press** - Squeeze the most out of your code! 🍇

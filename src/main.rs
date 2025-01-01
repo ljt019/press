@@ -14,8 +14,8 @@ use tokio;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, num_args = 1.., value_delimiter = '&', help = "Directories to process", required = true)]
-    directories: Vec<String>,
+    #[arg(short, long, num_args = 1.., value_delimiter = '&', help = "Paths to directories or files to process", required = true)]
+    paths: Vec<String>,
 
     #[arg(short, long, default_value_t = ("./").to_string(), help = "Output directory")]
     output_directory: String,
@@ -32,6 +32,46 @@ struct Args {
         help = "API key for DeepSeek (only required the first time)"
     )]
     api_key: Option<String>,
+}
+
+fn save_individual_files(response: &str, output_directory: &Path) -> Result<(), std::io::Error> {
+    // Empty the output directory before saving new files
+    if output_directory.exists() {
+        for entry in read_dir(output_directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                std::fs::remove_file(path)?;
+            }
+        }
+    } else {
+        create_dir_all(output_directory)?;
+    }
+
+    let mut current_tag = String::new();
+    let mut current_content = String::new();
+    let mut in_tag = false;
+
+    for line in response.lines() {
+        if line.starts_with('<') && line.ends_with('>') && !line.starts_with("</") {
+            // Start of a new file
+            current_tag = line.trim_matches(|c| c == '<' || c == '>').to_string();
+            in_tag = true;
+        } else if line.starts_with("</") && line.ends_with('>') && line.contains(&current_tag) {
+            // End of the current file
+            let file_path = output_directory.join(&current_tag).with_extension("txt");
+            let mut file = File::create(&file_path)?;
+            file.write_all(current_content.trim().as_bytes())?;
+            current_content.clear();
+            in_tag = false;
+        } else if in_tag {
+            // Content of the current file
+            current_content.push_str(line);
+            current_content.push('\n');
+        }
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -60,15 +100,19 @@ async fn main() {
         "[1/3] 'Pressing' Files".bright_cyan().bold()
     );
 
-    let directories: Vec<&Path> = args.directories.iter().map(|dir| Path::new(dir)).collect();
     let output_directory = Path::new(&args.output_directory);
 
     let mut directory_files = Vec::new();
 
     // Gather files
-    for directory in directories {
-        let files = get_directory_text_files(directory).expect("Couldn't get list of files");
-        directory_files.extend(files);
+    for path in args.paths {
+        let path = Path::new(&path);
+        if path.is_file() {
+            directory_files.push(path.to_path_buf());
+        } else if path.is_dir() {
+            let files = get_directory_text_files(path).expect("Couldn't get list of files");
+            directory_files.extend(files);
+        }
     }
     let file_count = directory_files.len();
     println!(
@@ -106,7 +150,7 @@ async fn main() {
     let final_prompt = format!(
         "<code_files>{}</code_files> \
          <user_prompt>{}</user_prompt> \
-         <important>Only respond with the updated code files, \
+         <important>Only respond with the updated text files, \
          and keep them surrounded by their file name in xml tags</important>",
         output_file_text, args.prompt
     );
@@ -148,21 +192,21 @@ async fn main() {
     let press_output_dir = output_directory.join("press.output");
     create_dir_all(&press_output_dir).expect("Couldn't create output directory");
 
-    let output_file_path = press_output_dir.join("pressed.txt");
-    let mut file = File::create(&output_file_path).expect("Couldn't create file");
-    file.write_all(response.as_bytes())
-        .expect("Couldn't write to file");
+    // Save individual files
+    save_individual_files(&response, &press_output_dir).expect("Failed to save individual files");
 
     println!(
         "   {} {}",
         "→".bright_white(),
-        "Successfully saved results to file".italic().bright_white()
+        "Successfully saved results to individual files"
+            .italic()
+            .bright_white()
     );
 
     println!(
         "   {} {}",
         "→".bright_white(),
-        format!("{}", output_file_path.display()).bright_white(),
+        format!("{}", press_output_dir.display()).bright_white(),
     );
 
     println!();
