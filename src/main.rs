@@ -86,7 +86,7 @@ async fn save_individual_files(
 
     // Initialize the XML reader
     let mut reader = Reader::from_str(response);
-    reader.config_mut().trim_text(true); // Corrected usage
+    reader.config_mut().trim_text(true);
 
     let mut current_filename: Option<String> = None;
     let mut current_content = String::new();
@@ -107,12 +107,16 @@ async fn save_individual_files(
                     }
                 }
             }
+            Ok(Event::CData(e)) => {
+                // Handle CDATA sections directly
+                current_content.push_str(&String::from_utf8_lossy(&e));
+            }
             Ok(Event::Text(e)) => {
+                // Handle regular text content
                 match e.unescape() {
                     Ok(text) => current_content.push_str(&text.into_owned()),
                     Err(err) => {
                         log::error!("Error unescaping text: {:?}", err);
-                        // Optionally handle the error or skip the problematic content
                     }
                 }
             }
@@ -141,7 +145,6 @@ async fn save_individual_files(
             }
             Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
                 // Handle non-code responses if necessary
-                // For example, you might log them or save to a separate file
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -364,10 +367,10 @@ async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Erro
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
         // Wrap the contents within CDATA and store the filename as an attribute
         combined.push_str(&format!(
-            "<file name=\"{0}\"><![CDATA[{1}]]></file>\n",
+            "<file name=\"{0}\"><![CDATA[{1}]]]]><![CDATA[></file>\n",
             // Escape double quotes in filenames to ensure valid XML
             filename.replace("\"", "&quot;"),
-            contents.replace("]]>", "]]]]><![CDATA[>") // Handle CDATA end sequence
+            contents.replace("]]>", "]]]]><![CDATA[>")
         ));
     }
     Ok(combined)
