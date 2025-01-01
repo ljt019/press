@@ -55,19 +55,23 @@ press --paths path/to/dir1 path/to/file1 --prompt "Your custom prompt here" --ap
 Copy code
 press --paths src tests main.rs --prompt "Refactor the code for better readability" --api-key YOUR_API_KEY
 ```
+
 ##### Saving Outputs to a Specific Directory:
 ```bash
 Copy code
-press --paths src utils --prompt "Optimize the performance of these scripts" --output-directory ./optimized_code```
+press --paths src utils --prompt "Optimize the performance of these scripts" --output-directory ./optimized_code
+```
 
 ##### Overwriting Original Files:
 ```bash
 Copy code
-press --paths src --prompt "Add comprehensive comments to the codebase" --auto```
+press --paths src --prompt "Add comprehensive comments to the codebase" --auto
+```
 
 ##### Using a Custom System Prompt:
 ```bash
 Copy code
-press --paths project/src --prompt "Improve the error handling mechanisms" --system-prompt "You are a senior software engineer"```
+press --paths project/src --prompt "Improve the error handling mechanisms" --system-prompt "You are a senior software engineer"
+```
 
 🍇 **Press** - Squeeze the most out of your code! 🍇
