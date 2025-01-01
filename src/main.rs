@@ -193,7 +193,7 @@ async fn main() {
     "<code_files>{}</code_files> \
      <user_prompt>{}</user_prompt>
      <important>Only respond with the updated text files, \
-     and keep them surrounded by their file name in xml tags with CDATA sections. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
+     and keep them surrounded by their file name in xml tags with CDATA sections. If you must send a response other than code files, put it in <response.txt><![CDATA[Your response here]]></response.txt> tags.</important>",
     output_file_text, args.prompt
 );
 
