@@ -19,9 +19,32 @@ cd press
 
 # Build the project
 cargo build --release
+```
 
-# Run press
-./target/release/press --help
+### Adding to PATH (Windows)
+
+Option 1: Using PowerShell (temporary)
+```powershell
+$Env:PATH += ";$PWD\target\release"
+```
+
+Option 2: Through Windows Settings (permanent)
+1. Press `Win + X` and select "System"
+2. Click "About" then "Advanced system settings"
+3. Click "Environment Variables"
+4. Under "User variables", select "Path" and click "Edit"
+5. Click "New"
+6. Add the full path to the `press.exe` (e.g., `C:\Users\YourName\projects\press\target\release`)
+7. Click "OK" on all windows
+
+Option 3: Using Command Prompt (permanent)
+```cmd
+setx PATH "%PATH%;C:\path\to\press\target\release"
+```
+
+Verify the installation by opening a new terminal and running:
+```bash
+press --help
 ```
 
 ## Usage

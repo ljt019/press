@@ -43,6 +43,7 @@ struct Args {
     auto: bool,
 }
 
+/// Saves individual files based on the AI response
 fn save_individual_files(
     response: &str,
     output_directory: &Path,
@@ -66,6 +67,7 @@ fn save_individual_files(
     let mut in_tag = false;
     let mut saved_files = 0;
 
+    // Parse the AI response to extract file content
     for line in response.lines() {
         if line.starts_with('<') && line.ends_with('>') && !line.starts_with("</") {
             current_tag = line.trim_matches(|c| c == '<' || c == '>').to_string();
@@ -217,6 +219,7 @@ async fn main() {
     println!();
 }
 
+/// Collects files to process from given paths
 fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
@@ -231,6 +234,7 @@ fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     directory_files
 }
 
+/// Recursively collects text files from a directory
 fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
@@ -264,6 +268,7 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
+/// Combines the content of multiple text files into a single string
 fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
@@ -276,6 +281,7 @@ fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     Ok(combined)
 }
 
+/// Creates a spinner for indicating progress
 fn create_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -291,6 +297,7 @@ fn create_spinner() -> ProgressBar {
     spinner
 }
 
+/// Returns the directory of the executable
 fn get_executable_dir() -> PathBuf {
     env::current_exe()
         .expect("Failed to get the executable path")
@@ -299,16 +306,19 @@ fn get_executable_dir() -> PathBuf {
         .to_path_buf()
 }
 
+/// Returns the path to the API key file
 fn get_api_key_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("deepseek_api_key.txt");
     path
 }
 
+/// Reads the API key from the file
 fn read_api_key() -> std::io::Result<String> {
     std::fs::read_to_string(get_api_key_path())
 }
 
+/// Writes the API key to the file
 fn write_api_key(api_key: &str) -> std::io::Result<()> {
     std::fs::write(get_api_key_path(), api_key)
 }
