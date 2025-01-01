@@ -3,11 +3,15 @@ mod deep_seek_api;
 use clap::Parser;
 use colored::*;
 use deep_seek_api::DeepSeekApi;
+use env_logger;
 use indicatif::{ProgressBar, ProgressStyle};
+use log;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use std::{
     env,
     fs::{create_dir_all, read_dir, File},
-    io::{BufReader, Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -44,62 +48,91 @@ struct Args {
 }
 
 /// Saves individual files based on the AI response
-fn save_individual_files(
+async fn save_individual_files(
     response: &str,
     output_directory: &Path,
     auto: bool,
     original_paths: &[PathBuf],
 ) -> Result<usize, std::io::Error> {
     if output_directory.exists() {
-        for entry in read_dir(output_directory)? {
-            let entry = entry?;
+        let entries = read_dir(output_directory)?;
+        for entry_result in entries {
+            let entry = entry_result?;
             let path = entry.path();
             if path.is_file() {
-                std::fs::remove_file(path)?;
+                tokio::fs::remove_file(path).await?;
             }
         }
     } else {
         create_dir_all(output_directory)?;
     }
 
-    let mut current_tag = String::new();
+    let mut reader = Reader::from_str(response);
+
+    let mut current_tag = Vec::new();
     let mut current_content = String::new();
-    let mut in_tag = false;
     let mut saved_files = 0;
 
-    // Parse the AI response to extract file content
-    for line in response.lines() {
-        if line.starts_with('<') && line.ends_with('>') && !line.starts_with("</") {
-            current_tag = line.trim_matches(|c| c == '<' || c == '>').to_string();
-            in_tag = true;
-        } else if line.starts_with("</") && line.ends_with('>') && line.contains(&current_tag) {
-            let file_path = if auto {
-                original_paths
-                    .iter()
-                    .find(|path| {
-                        path.file_name().unwrap_or_default().to_string_lossy() == current_tag
-                    })
-                    .unwrap_or(&PathBuf::from(&current_tag))
-                    .to_path_buf()
-            } else {
-                output_directory.join(&current_tag).with_extension("txt")
-            };
-            let mut file = File::create(&file_path)?;
-            file.write_all(current_content.trim().as_bytes())?;
-            saved_files += 1;
-            current_content.clear();
-            in_tag = false;
-        } else if in_tag {
-            current_content.push_str(line);
-            current_content.push('\n');
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                current_tag = e.name().as_ref().to_vec();
+            }
+            Ok(Event::Text(e)) => {
+                match e.unescape() {
+                    Ok(text) => current_content.push_str(&text.into_owned()),
+                    Err(err) => {
+                        log::error!("Error unescaping text: {:?}", err);
+                        // Optionally handle the error or skip the problematic content
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let tag = e.name().as_ref().to_vec();
+                if tag == current_tag {
+                    let tag_str = String::from_utf8(tag.clone()).unwrap();
+                    let file_path = if tag_str == "response.txt" {
+                        output_directory.join(&tag_str).with_extension("txt")
+                    } else if auto {
+                        original_paths
+                            .iter()
+                            .find(|path| {
+                                path.file_name().unwrap_or_default().to_string_lossy() == tag_str
+                            })
+                            .unwrap_or(&PathBuf::from(&tag_str))
+                            .to_path_buf()
+                    } else {
+                        output_directory.join(&tag_str).with_extension("txt")
+                    };
+                    let mut file = File::create(&file_path)?;
+                    file.write_all(current_content.trim().as_bytes())?;
+                    saved_files += 1;
+                    current_content.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                log::error!("Error parsing XML: {:?}", e);
+                break;
+            }
+            _ => (),
         }
+        buf.clear();
     }
 
-    Ok(saved_files)
+    // Save the raw response to most_recent_response_log.txt
+    let log_file_path = output_directory.join("raw_response.log");
+    let mut log_file = File::create(log_file_path)?;
+    log_file.write_all(response.as_bytes())?;
+    saved_files += 1;
+
+    Ok(saved_files - 1)
 }
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let start_time = Instant::now();
     let args = Args::parse();
 
@@ -133,8 +166,9 @@ async fn main() {
             .bright_white()
     );
 
-    let output_file_text =
-        combine_text_files(directory_files.clone()).expect("Couldn't combine files");
+    let output_file_text = combine_text_files(directory_files.clone())
+        .await
+        .expect("Couldn't combine files");
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -156,16 +190,26 @@ async fn main() {
 
     let deepseek_api = DeepSeekApi::new(api_key);
     let final_prompt = format!(
-        "<code_files>{}</code_files> \
-         <user_prompt>{}</user_prompt>
-         <important>Only respond with the updated text files, \
-         and keep them surrounded by their file name in xml tags, if you must send a response other than code files put it in <response> xml tags </important>",
-        output_file_text, args.prompt
-    );
+    "<code_files>{}</code_files> \
+     <user_prompt>{}</user_prompt>
+     <important>Only respond with the updated text files, \
+     and keep them surrounded by their file name in xml tags with CDATA sections. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
+    output_file_text, args.prompt
+);
 
     let spinner = create_spinner();
 
-    let system_prompt = args.system_prompt;
+    let system_prompt = format!("<user_system_prompt>{}</user_system_prompt> <admin_system_prompt>{}</admin_system_prompt>", args.system_prompt, "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will primarily be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines.
+If a non-code response is needed surround it in <response.txt> tags so it gets saved in the relevant place.
+
+1. **Formatting Restrictions**:
+   - Do not include any code block delimiters such as ``` or markdown formatting.
+   - Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
+
+2. **Code Integrity**:
+   - Ensure that the syntax and structure of the code remain correct and functional.
+   - Only make necessary improvements or refactorings based on the user's prompt.
+");
 
     let response = deepseek_api
         .call_deepseek(&system_prompt, &final_prompt)
@@ -190,6 +234,7 @@ async fn main() {
 
     let saved_files =
         save_individual_files(&response, &press_output_dir, args.auto, &directory_files)
+            .await
             .expect("Failed to save individual files");
 
     println!(
@@ -271,15 +316,18 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
-/// Combines the content of multiple text files into a single string
-fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
+/// Combines the content of multiple text files into a single string with CDATA
+async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
-        let mut file = BufReader::new(File::open(&path)?);
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        let contents = tokio::fs::read_to_string(&path).await?;
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        combined.push_str(&format!("<{0}>{1}</{0}>\n", filename, contents));
+        // Wrap the contents within CDATA
+        combined.push_str(&format!(
+            "<{0}><![CDATA[{1}]]></{0}>\n",
+            filename.replace(".", "_"), // Replace dots to ensure valid XML tags
+            contents.replace("]]>", "]]]]><![CDATA[>")  // Handle CDATA end sequence
+        ));
     }
     Ok(combined)
 }

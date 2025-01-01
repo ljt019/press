@@ -1,3 +1,4 @@
+use log;
 use reqwest::Client;
 use serde_json::{json, Value};
 
@@ -45,9 +46,13 @@ impl DeepSeekApi {
             .unwrap_or_else(|_| json!({"error": "Invalid JSON"}));
 
         // Extract the content from the response
-        json_response["choices"][0]["message"]["content"]
+        let response = json_response["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("(No response)")
-            .to_string()
+            .to_string();
+
+        //log::info!("{}", response);
+
+        response
     }
 }
