@@ -199,7 +199,7 @@ async fn main() -> Result<(), AppError> {
     };
 
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
-    println!("{}", "│  🍇 Press v0.1.0     │".bright_magenta().bold());
+    println!("{}", "│  🍇 Press v0.3.0     │".bright_magenta().bold());
     println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
     println!(
