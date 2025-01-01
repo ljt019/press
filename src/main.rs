@@ -2,7 +2,7 @@ mod deep_seek_api;
 
 use clap::Parser;
 use colored::*;
-use deep_seek_api::DeepSeekApi;
+use deep_seek_api::{DeepSeekApi, DeepSeekError};
 use env_logger;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
@@ -10,16 +10,50 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::{
     env,
+    fmt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio;
 
-/// Command-line arguments structure
+#[derive(Debug)]
+enum AppError {
+    IoError(std::io::Error),
+    DeepSeekError(DeepSeekError),
+    XmlError(quick_xml::Error),
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppError::IoError(e) => write!(f, "IO error: {}", e),
+            AppError::DeepSeekError(e) => write!(f, "DeepSeek API error: {}", e),
+            AppError::XmlError(e) => write!(f, "XML parsing error: {}", e),
+        }
+    }
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(err: std::io::Error) -> Self {
+        AppError::IoError(err)
+    }
+}
+
+impl From<DeepSeekError> for AppError {
+    fn from(err: DeepSeekError) -> Self {
+        AppError::DeepSeekError(err)
+    }
+}
+
+impl From<quick_xml::Error> for AppError {
+    fn from(err: quick_xml::Error) -> Self {
+        AppError::XmlError(err)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Paths to directories or files to process
     #[arg(
         short,
         long,
@@ -30,15 +64,12 @@ struct Args {
     )]
     paths: Vec<String>,
 
-    /// Output directory
     #[arg(short, long, default_value_t = ("./").to_string(), help = "Output directory")]
     output_directory: String,
 
-    /// Prompt for the AI
     #[arg(short, long, help = "Prompt for the AI", required = true)]
     prompt: String,
 
-    /// System prompt for the AI
     #[arg(
         short,
         long,
@@ -47,7 +78,6 @@ struct Args {
     )]
     system_prompt: String,
 
-    /// API key for DeepSeek (only required the first time)
     #[arg(
         short,
         long,
@@ -55,23 +85,28 @@ struct Args {
     )]
     api_key: Option<String>,
 
-    /// Automatically overwrite original files with the same name
     #[arg(
         short,
         long,
         help = "Automatically overwrite original files with the same name"
     )]
     auto: bool,
+
+    #[arg(
+        short,
+        long,
+        help = "Maximum number of retries for API calls",
+        default_value_t = 3
+    )]
+    retries: u32,
 }
 
-/// Saves individual files based on the AI response
 async fn save_individual_files(
     response: &str,
     output_directory: &Path,
     auto: bool,
     original_paths: &[PathBuf],
-) -> Result<usize, std::io::Error> {
-    // Clear existing files in the output directory
+) -> Result<usize, AppError> {
     if output_directory.exists() {
         let mut entries = tokio::fs::read_dir(output_directory).await?;
         while let Some(entry) = entries.next_entry().await? {
@@ -84,7 +119,6 @@ async fn save_individual_files(
         tokio::fs::create_dir_all(output_directory).await?;
     }
 
-    // Initialize the XML reader
     let mut reader = Reader::from_str(response);
     reader.config_mut().trim_text(true);
 
@@ -96,23 +130,19 @@ async fn save_individual_files(
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) if e.name().as_ref() == b"file" => {
-                // Extract the filename from the 'name' attribute
                 for attr in e.attributes().with_checks(false) {
                     if let Ok(attr) = attr {
                         if attr.key.as_ref() == b"name" {
-                            // Decode the attribute value
-                            let value = attr.unescape_value().unwrap_or_default();
+                            let value = attr.unescape_value()?;
                             current_filename = Some(value.into_owned());
                         }
                     }
                 }
             }
             Ok(Event::CData(e)) => {
-                // Handle CDATA sections directly
                 current_content.push_str(&String::from_utf8_lossy(&e));
             }
             Ok(Event::Text(e)) => {
-                // Handle regular text content
                 match e.unescape() {
                     Ok(text) => current_content.push_str(&text.into_owned()),
                     Err(err) => {
@@ -133,19 +163,15 @@ async fn save_individual_files(
                     } else {
                         output_directory.join(&filename)
                     };
-                    // Ensure the parent directory exists
                     if let Some(parent) = file_path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
-                    // Write the content to the file asynchronously
                     tokio::fs::write(&file_path, current_content.trim().as_bytes()).await?;
                     saved_files += 1;
                     current_content.clear();
                 }
             }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
-                // Handle non-code responses if necessary
-            }
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {}
             Ok(Event::Eof) => break,
             Err(e) => {
                 log::error!("Error parsing XML: {:?}", e);
@@ -156,35 +182,31 @@ async fn save_individual_files(
         buf.clear();
     }
 
-    // Save the raw response to raw_response.log
     let log_file_path = output_directory.join("raw_response.log");
     tokio::fs::write(log_file_path, response.as_bytes()).await?;
     saved_files += 1;
 
-    Ok(saved_files - 1) // Subtracting the log file
+    Ok(saved_files - 1)
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AppError> {
     env_logger::init();
     let start_time = Instant::now();
     let args = Args::parse();
 
-    // Handle API key
     let api_key = match args.api_key {
         Some(key) => {
-            write_api_key(&key).expect("Failed to save API key");
+            write_api_key(&key)?;
             key
         }
-        None => read_api_key().expect("API key not found. Please provide it with --api-key flag"),
+        None => read_api_key()?,
     };
 
-    // Display application banner
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
     println!("{}", "│  🍇 Press v0.1.0     │".bright_magenta().bold());
     println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
-    // Step 1: Combine Files
     println!(
         "{} {}",
         "📁".bright_yellow(),
@@ -203,9 +225,7 @@ async fn main() {
             .bright_white()
     );
 
-    let output_file_text = combine_text_files(directory_files.clone())
-        .await
-        .expect("Couldn't combine files");
+    let output_file_text = combine_text_files(directory_files.clone()).await?;
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -214,7 +234,6 @@ async fn main() {
             .bright_white()
     );
 
-    // Step 2: Query AI
     println!(
         "\n{} {}",
         "🤖".bright_yellow(),
@@ -251,9 +270,18 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
    - Only make necessary improvements or refactorings based on the user's prompt."
     );
 
-    let response = deepseek_api
-        .call_deepseek(&system_prompt, &final_prompt)
-        .await;
+    let mut retries = args.retries;
+    let response = loop {
+        match deepseek_api.call_deepseek(&system_prompt, &final_prompt).await {
+            Ok(response) => break response,
+            Err(e) if retries > 0 => {
+                retries -= 1;
+                log::warn!("API call failed, retries left: {} ({})", retries, e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
 
     spinner.finish_and_clear();
 
@@ -263,7 +291,6 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
         "Successfully received AI response".italic().bright_white()
     );
 
-    // Step 3: Save Results
     println!(
         "\n{} {}",
         "💾".bright_yellow(),
@@ -271,14 +298,9 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
     );
 
     let press_output_dir = output_directory.join("press.output");
-    tokio::fs::create_dir_all(&press_output_dir)
-        .await
-        .expect("Couldn't create output directory");
+    tokio::fs::create_dir_all(&press_output_dir).await?;
 
-    let saved_files =
-        save_individual_files(&response, &press_output_dir, args.auto, &directory_files)
-            .await
-            .expect("Failed to save individual files");
+    let saved_files = save_individual_files(&response, &press_output_dir, args.auto, &directory_files).await?;
 
     println!(
         "   {} {}",
@@ -308,9 +330,10 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
             .dimmed(),
     );
     println!();
+
+    Ok(())
 }
 
-/// Collects files to process from given paths
 fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
@@ -318,14 +341,15 @@ fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
         if path.is_file() {
             directory_files.push(path.to_path_buf());
         } else if path.is_dir() {
-            let files = get_directory_text_files(path).expect("Couldn't get list of files");
-            directory_files.extend(files);
+            match get_directory_text_files(path) {
+                Ok(files) => directory_files.extend(files),
+                Err(e) => log::error!("Error reading directory {}: {}", path.display(), e),
+            }
         }
     }
     directory_files
 }
 
-/// Recursively collects text files from a directory
 fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
@@ -359,16 +383,13 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
-/// Combines the content of multiple text files into a single string with CDATA and name attributes
 async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
         let contents = tokio::fs::read_to_string(&path).await?;
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        // Wrap the contents within CDATA and store the filename as an attribute
         combined.push_str(&format!(
             "<file name=\"{0}\"><![CDATA[{1}]]]]><![CDATA[></file>\n",
-            // Escape double quotes in filenames to ensure valid XML
             filename.replace("\"", "&quot;"),
             contents.replace("]]>", "]]]]><![CDATA[>")
         ));
@@ -376,7 +397,6 @@ async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Erro
     Ok(combined)
 }
 
-/// Creates a spinner for indicating progress
 fn create_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -392,7 +412,6 @@ fn create_spinner() -> ProgressBar {
     spinner
 }
 
-/// Returns the directory of the executable
 fn get_executable_dir() -> PathBuf {
     env::current_exe()
         .expect("Failed to get the executable path")
@@ -401,19 +420,16 @@ fn get_executable_dir() -> PathBuf {
         .to_path_buf()
 }
 
-/// Returns the path to the API key file
 fn get_api_key_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("deepseek_api_key.txt");
     path
 }
 
-/// Reads the API key from the file
 fn read_api_key() -> std::io::Result<String> {
     std::fs::read_to_string(get_api_key_path())
 }
 
-/// Writes the API key to the file
 fn write_api_key(api_key: &str) -> std::io::Result<()> {
     std::fs::write(get_api_key_path(), api_key)
 }
