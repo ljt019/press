@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 
 const BASE_URL: &str = "https://api.deepseek.com";
 
-/// Struct to interact with the DeepSeek API
 pub struct DeepSeekApi {
     client: Client,
     api_key: String,
@@ -11,7 +10,6 @@ pub struct DeepSeekApi {
 }
 
 impl DeepSeekApi {
-    /// Creates a new DeepSeekApi instance with the provided API key
     pub fn new(api_key: String) -> Self {
         Self {
             client: Client::new(),
@@ -20,7 +18,6 @@ impl DeepSeekApi {
         }
     }
 
-    /// Sends a request to the DeepSeek API with the given system prompt and user input
     pub async fn call_deepseek(&self, system_prompt: &str, user_input: &str) -> String {
         let messages = vec![
             json!({"role": "system", "content": system_prompt}),

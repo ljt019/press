@@ -13,7 +13,6 @@ use std::{
 };
 use tokio;
 
-/// Command-line arguments for the application
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -35,10 +34,21 @@ struct Args {
         help = "API key for DeepSeek (only required the first time)"
     )]
     api_key: Option<String>,
+
+    #[arg(
+        short,
+        long,
+        help = "Automatically overwrite original files with the same name"
+    )]
+    auto: bool,
 }
 
-/// Saves individual files from the AI response to the output directory
-fn save_individual_files(response: &str, output_directory: &Path) -> Result<(), std::io::Error> {
+fn save_individual_files(
+    response: &str,
+    output_directory: &Path,
+    auto: bool,
+    original_paths: &[PathBuf],
+) -> Result<usize, std::io::Error> {
     if output_directory.exists() {
         for entry in read_dir(output_directory)? {
             let entry = entry?;
@@ -54,15 +64,27 @@ fn save_individual_files(response: &str, output_directory: &Path) -> Result<(), 
     let mut current_tag = String::new();
     let mut current_content = String::new();
     let mut in_tag = false;
+    let mut saved_files = 0;
 
     for line in response.lines() {
         if line.starts_with('<') && line.ends_with('>') && !line.starts_with("</") {
             current_tag = line.trim_matches(|c| c == '<' || c == '>').to_string();
             in_tag = true;
         } else if line.starts_with("</") && line.ends_with('>') && line.contains(&current_tag) {
-            let file_path = output_directory.join(&current_tag).with_extension("txt");
+            let file_path = if auto {
+                original_paths
+                    .iter()
+                    .find(|path| {
+                        path.file_name().unwrap_or_default().to_string_lossy() == current_tag
+                    })
+                    .unwrap_or(&PathBuf::from(&current_tag))
+                    .to_path_buf()
+            } else {
+                output_directory.join(&current_tag).with_extension("txt")
+            };
             let mut file = File::create(&file_path)?;
             file.write_all(current_content.trim().as_bytes())?;
+            saved_files += 1;
             current_content.clear();
             in_tag = false;
         } else if in_tag {
@@ -71,7 +93,7 @@ fn save_individual_files(response: &str, output_directory: &Path) -> Result<(), 
         }
     }
 
-    Ok(())
+    Ok(saved_files)
 }
 
 #[tokio::main]
@@ -109,7 +131,8 @@ async fn main() {
             .bright_white()
     );
 
-    let output_file_text = combine_text_files(directory_files).expect("Couldn't combine files");
+    let output_file_text =
+        combine_text_files(directory_files.clone()).expect("Couldn't combine files");
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -160,7 +183,9 @@ async fn main() {
     let press_output_dir = output_directory.join("press.output");
     create_dir_all(&press_output_dir).expect("Couldn't create output directory");
 
-    save_individual_files(&response, &press_output_dir).expect("Failed to save individual files");
+    let saved_files =
+        save_individual_files(&response, &press_output_dir, args.auto, &directory_files)
+            .expect("Failed to save individual files");
 
     println!(
         "   {} {}",
@@ -179,6 +204,12 @@ async fn main() {
     println!();
     println!(
         "{}",
+        format!("⚡ Modified {} file(s)", saved_files)
+            .bright_white()
+            .dimmed(),
+    );
+    println!(
+        "{}",
         format!("⚡ Completed in {:.2?}", start_time.elapsed())
             .bright_white()
             .dimmed(),
@@ -186,7 +217,6 @@ async fn main() {
     println!();
 }
 
-/// Retrieves a list of files to process from the provided paths
 fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
@@ -201,7 +231,6 @@ fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     directory_files
 }
 
-/// Recursively retrieves text files from a directory
 fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
@@ -235,7 +264,6 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
-/// Combines the contents of multiple text files into a single string
 fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
@@ -248,7 +276,6 @@ fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     Ok(combined)
 }
 
-/// Creates a spinner for indicating progress
 fn create_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -264,7 +291,6 @@ fn create_spinner() -> ProgressBar {
     spinner
 }
 
-/// Retrieves the directory of the executable
 fn get_executable_dir() -> PathBuf {
     env::current_exe()
         .expect("Failed to get the executable path")
@@ -273,19 +299,16 @@ fn get_executable_dir() -> PathBuf {
         .to_path_buf()
 }
 
-/// Retrieves the path to the API key file
 fn get_api_key_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("deepseek_api_key.txt");
     path
 }
 
-/// Reads the API key from the file
 fn read_api_key() -> std::io::Result<String> {
     std::fs::read_to_string(get_api_key_path())
 }
 
-/// Writes the API key to the file
 fn write_api_key(api_key: &str) -> std::io::Result<()> {
     std::fs::write(get_api_key_path(), api_key)
 }
