@@ -57,6 +57,8 @@ impl DeepSeekApi {
             .unwrap_or("(No response)")
             .to_string();
 
+        log::info!("DeepSeek response: {}", response);
+
         Ok(response)
     }
 }

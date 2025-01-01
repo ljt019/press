@@ -89,7 +89,7 @@ async fn save_individual_files(
     reader.config_mut().trim_text(true);
 
     let mut current_path: Option<String> = None;
-    let mut current_content = String::new();
+    let mut current_parts: Vec<(usize, String)> = Vec::new(); // (part_id, content)
     let mut saved_files = 0;
     let mut response_txt_content = String::new();
 
@@ -99,7 +99,7 @@ async fn save_individual_files(
             Ok(Event::Start(ref e)) if e.name().as_ref() == b"file" => {
                 for attr in e.attributes().with_checks(false) {
                     if let Ok(attr) = attr {
-                        if attr.key.as_ref() == b"name" {
+                        if attr.key.as_ref() == b"path" {
                             let value = attr.unescape_value()?;
                             current_path = Some(value.into_owned());
                         }
@@ -116,32 +116,74 @@ async fn save_individual_files(
                     }
                 }
             }
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"part" => {
+                for attr in e.attributes().with_checks(false) {
+                    if let Ok(attr) = attr {
+                        if attr.key.as_ref() == b"id" {
+                            let value = attr.unescape_value()?;
+                            let part_id = value.parse::<usize>().unwrap_or(0);
+                            current_parts.push((part_id, String::new()));
+                        }
+                    }
+                }
+            }
             Ok(Event::CData(e)) => {
-                current_content.push_str(&String::from_utf8_lossy(&e));
+                if let Some(last_part) = current_parts.last_mut() {
+                    last_part.1.push_str(&String::from_utf8_lossy(&e));
+                }
             }
             Ok(Event::Text(e)) => match e.unescape() {
-                Ok(text) => current_content.push_str(&text.into_owned()),
+                Ok(text) => {
+                    if let Some(last_part) = current_parts.last_mut() {
+                        last_part.1.push_str(&text.into_owned());
+                    }
+                }
                 Err(err) => {
                     log::error!("Error unescaping text: {:?}", err);
                 }
             },
             Ok(Event::End(ref e)) if e.name().as_ref() == b"file" => {
                 if let Some(path) = current_path.take() {
-                    let file_path = if auto {
-                        original_paths
-                            .iter()
-                            .find(|p| p.file_name().unwrap_or_default().to_string_lossy() == path)
-                            .unwrap_or(&PathBuf::from(&path))
-                            .to_path_buf()
+                    // Find the original file path
+                    let fallback = PathBuf::from(&path);
+                    let original_file_path = original_paths
+                        .iter()
+                        .find(|p| p.to_string_lossy().ends_with(&path))
+                        .unwrap_or(&fallback);
+
+                    // Read the original file and split it into parts
+                    let original_content = tokio::fs::read_to_string(&original_file_path).await?;
+                    let lines: Vec<&str> = original_content.lines().collect();
+                    let mut parts: Vec<String> =
+                        lines.chunks(50).map(|chunk| chunk.join("\n")).collect();
+
+                    // Replace the updated parts
+                    for (part_id, content) in current_parts.drain(..) {
+                        if part_id > 0 && part_id <= parts.len() {
+                            parts[part_id - 1] = content;
+                        }
+                    }
+
+                    // Reconstruct the file content
+                    let new_content = parts.join("\n");
+
+                    // Determine the output path
+                    let output_file_path = if auto {
+                        // Overwrite the original file
+                        original_file_path.to_path_buf()
                     } else {
+                        // Save the modified file in the press.output directory
                         output_directory.join(&path)
                     };
-                    if let Some(parent) = file_path.parent() {
+
+                    // Ensure the parent directory exists
+                    if let Some(parent) = output_file_path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
-                    tokio::fs::write(&file_path, current_content.trim().as_bytes()).await?;
+
+                    // Save the file
+                    tokio::fs::write(&output_file_path, new_content.as_bytes()).await?;
                     saved_files += 1;
-                    current_content.clear();
                 }
             }
             Ok(Event::End(ref e)) if e.name().as_ref() == b"new_file" => {
@@ -150,17 +192,24 @@ async fn save_individual_files(
                     if let Some(parent) = file_path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
-                    tokio::fs::write(&file_path, current_content.trim().as_bytes()).await?;
+                    let new_content = current_parts
+                        .drain(..)
+                        .map(|(_, content)| content)
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    tokio::fs::write(&file_path, new_content.as_bytes()).await?;
                     saved_files += 1;
-                    current_content.clear();
                 }
             }
             Ok(Event::Start(ref e)) if e.name().as_ref() == b"response_txt" => {
-                current_content.clear();
+                current_parts.clear();
             }
             Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
-                response_txt_content = current_content.clone();
-                current_content.clear();
+                response_txt_content = current_parts
+                    .drain(..)
+                    .map(|(_, content)| content)
+                    .collect::<Vec<String>>()
+                    .join("\n");
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -209,7 +258,7 @@ async fn main() -> Result<(), AppError> {
     );
 
     let output_directory = Path::new(&args.output_directory);
-    let directory_files = get_files_to_process(&args.paths);
+    let directory_files = get_files_to_press(&args.paths);
     let file_count = directory_files.len();
 
     println!(
@@ -242,15 +291,15 @@ async fn main() -> Result<(), AppError> {
 
     let deepseek_api = DeepSeekApi::new(api_key);
     let final_prompt = format!(
-        "<code_files>{}</code_files> \
-         <user_prompt>{}</user_prompt>
-         <important>Respond only with updated files using these formats:
-1. Modify existing file: <file name=\"filename.ext\"><![CDATA[content]]></file>
-2. Create new file: <new_file path=\"src/relative/path/filename.ext\"><![CDATA[content]]></new_file>
+    "<code_files>{}</code_files> \
+     <user_prompt>{}</user_prompt>
+     <important>Respond only with updated files using these formats:
+1. Modify existing file: <file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
+2. Create new file: <new_file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[content]]></part></new_file>
 3. Non-code response: <response_txt><![CDATA[message]]></response_txt>
-All paths must be relative to src directory.</important>",
-        output_file_text, args.prompt
-    );
+All paths must be relative to the 'src' directory. Only include the parts that need to be changed for each file, not all parts.</important>",
+    output_file_text, args.prompt
+);
 
     let spinner = create_spinner();
 
@@ -337,7 +386,7 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
     Ok(())
 }
 
-fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
+fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
         let path = Path::new(path);
@@ -390,12 +439,31 @@ async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Erro
     let mut combined = String::new();
     for path in paths {
         let contents = tokio::fs::read_to_string(&path).await?;
-        let filename = path.file_name().unwrap_or_default().to_string_lossy();
+        let lines: Vec<&str> = contents.lines().collect();
+        let num_parts = (lines.len() + 49) / 50; // Ceiling division for number of parts
+
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .replace("\"", "&quot;");
+
         combined.push_str(&format!(
-            "<file name=\"{0}\"><![CDATA[{1}]]]]><![CDATA[></file>\n",
-            filename.replace("\"", "&quot;"),
-            contents.replace("]]>", "]]]]><![CDATA[>")
+            "<file path=\"{}\" parts=\"{}\">\n",
+            filename, num_parts
         ));
+
+        for (part_id, chunk) in lines.chunks(50).enumerate() {
+            let part_content: String = chunk.join("\n");
+            let cdata_content = part_content.replace("]]>", "]]]]><![CDATA[>");
+            combined.push_str(&format!(
+                "<part id=\"{}\"><![CDATA[{}]]></part>\n",
+                part_id + 1,
+                cdata_content
+            ));
+        }
+
+        combined.push_str("</file>\n");
     }
     Ok(combined)
 }
