@@ -23,6 +23,9 @@ struct Args {
     #[arg(short, long, help = "Prompt for the AI", required = true)]
     prompt: String,
 
+    #[arg(short, long, help = "System prompt for the AI", default_value_t = ("You are a helpful assistant").to_string())]
+    system_prompt: String,
+
     #[arg(
         short,
         long,
@@ -122,7 +125,9 @@ async fn main() {
     spinner.enable_steady_tick(Duration::from_millis(80));
 
     // Await API call
-    let response = deepseek_api.call_deepseek(&final_prompt).await;
+    let response = deepseek_api
+        .call_deepseek(&args.system_prompt, &final_prompt)
+        .await;
 
     // Stop the spinner
     spinner.finish_and_clear();

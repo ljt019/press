@@ -1,69 +1,301 @@
-<readme.md># Press 🍇
+<deep_seek_api.rs>
+use reqwest::Client;
+use serde_json::{json, Value};
 
-**Press** is a command-line tool designed to process and combine text files from specified directories, query the DeepSeek API with a custom prompt, and save the AI-generated response. It's particularly useful for developers who want to automate the processing of multiple code files and get AI-generated insights or modifications.
+const BASE_URL: &str = "https://api.deepseek.com";
 
-## Features
+pub struct DeepSeekApi {
+    client: Client,
+    api_key: String,
+    base_url: String,
+}
 
-- **File Aggregation**: Combines text files from multiple directories into a single input for the AI.
-- **DeepSeek Integration**: Queries the DeepSeek API with a custom prompt and retrieves the AI's response.
-- **Output Management**: Saves the AI-generated response to a specified output directory.
-- **API Key Management**: Stores the DeepSeek API key for future use, so you don't need to provide it every time.
+impl DeepSeekApi {
+    pub fn new(api_key: String) -> Self {
+        Self {
+            client: Client::new(),
+            api_key: api_key,
+            base_url: BASE_URL.to_string(),
+        }
+    }
 
-## Installation
+    pub async fn call_deepseek(&self, system_prompt: &str, user_input: &str) -> String {
+        let messages = vec![
+            json!({"role": "system", "content": system_prompt}),
+            json!({"role": "user", "content": user_input}),
+        ];
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/yourusername/press.git
-   cd press
-   ```
+        let response = self
+            .client
+            .post(&format!("{}/chat/completions", &self.base_url))
+            .header("Authorization", format!("Bearer {}", &self.api_key))
+            .json(&json!({
+                "model": "deepseek-chat",
+                "messages": messages
+            }))
+            .send()
+            .await
+            .expect("Failed to call DeepSeek");
 
-2. **Build the Project**:
-   ```bash
-   cargo build --release
-   ```
+        let raw_response = response.text().await.expect("Failed to read response text");
+        let json_response: Value = serde_json::from_str(&raw_response)
+            .unwrap_or_else(|_| json!({"error": "Invalid JSON"}));
 
-3. **Run the Executable**:
-   ```bash
-   ./target/release/press --help
-   ```
+        if let Some(choices) = json_response["choices"].as_array() {
+            if let Some(choice) = choices.get(0) {
+                return choice["message"]["content"]
+                    .as_str()
+                    .unwrap_or("(No response)")
+                    .to_string();
+            }
+        }
+        "(No response)".to_string()
+    }
+}
+</deep_seek_api.rs>
+<main.rs>
+mod deep_seek_api;
 
-## Usage
+use clap::Parser;
+use colored::*;
+use deep_seek_api::DeepSeekApi;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::env;
+use std::fs::{create_dir_all, read_dir, File};
+use std::io::{BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use tokio;
 
-### Basic Usage
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, num_args = 1.., value_delimiter = '&', help = "Directories to process", required = true)]
+    directories: Vec<String>,
 
-To process files from one or more directories and query the DeepSeek API:
+    #[arg(short, long, default_value_t = ("./").to_string(), help = "Output directory")]
+    output_directory: String,
 
-```bash
-press --directories path/to/dir1 path/to/dir2 --prompt "Your custom prompt here" --api-key YOUR_API_KEY
-```
+    #[arg(short, long, help = "Prompt for the AI", required = true)]
+    prompt: String,
 
-### Options
+    #[arg(short, long, help = "System prompt for the AI", default_value_t = ("You are a helpful assistant").to_string())]
+    system_prompt: String,
 
-- `--directories`: Specify one or more directories to process. Separate multiple directories with a space.
-- `--output-directory`: Specify the output directory where the results will be saved. Defaults to `./`.
-- `--prompt`: Provide a custom prompt for the AI.
-- `--api-key`: Provide your DeepSeek API key. This is only required the first time you run the tool.
+    #[arg(
+        short,
+        long,
+        help = "API key for DeepSeek (only required the first time)"
+    )]
+    api_key: Option<String>,
+}
 
-### Example
+#[tokio::main]
+async fn main() {
+    let start_time = Instant::now();
+    let args = Args::parse();
 
-```bash
-press --directories src tests --prompt "Refactor the code for better readability" --output-directory ./output
-```
+    // Check if the API key is provided as an argument or read it from the file
+    let api_key = match args.api_key {
+        Some(key) => {
+            write_api_key(&key).expect("Failed to save API key");
+            key
+        }
+        None => read_api_key().expect("API key not found. Please provide it with --api-key flag"),
+    };
 
-## Contributing
+    // Fancy title banner
+    println!("\n{}", "╭──────────────────────╮".bright_magenta());
+    println!("{}", "│  🍇 Press v0.1.0     │".bright_magenta().bold());
+    println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+    // STEP 1
+    println!(
+        "{} {}",
+        "📁".bright_yellow(),
+        "[1/3] 'Pressing' Files".bright_cyan().bold()
+    );
 
-## License
+    let directories: Vec<&Path> = args.directories.iter().map(|dir| Path::new(dir)).collect();
+    let output_directory = Path::new(&args.output_directory);
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+    let mut directory_files = Vec::new();
 
-## Acknowledgments
+    // Gather files
+    for directory in directories {
+        let files = get_directory_text_files(directory).expect("Couldn't get list of files");
+        directory_files.extend(files);
+    }
+    let file_count = directory_files.len();
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        format!("Found {} files to process", file_count)
+            .italic()
+            .bright_white()
+    );
 
-- **DeepSeek**: For providing the AI API that powers this tool.
-- **Rust Community**: For the amazing ecosystem and libraries that made this project possible.
+    // Combine file contents
+    let output_file_text = combine_text_files(directory_files).expect("Couldn't combine files");
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        "Successfully combined file contents"
+            .italic()
+            .bright_white()
+    );
 
----
+    // STEP 2
+    println!(
+        "\n{} {}",
+        "🤖".bright_yellow(),
+        "[2/3] Querying DeepSeek API".bright_cyan().bold()
+    );
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        "Preparing prompt for AI".italic().bright_white()
+    );
 
-🍇 **Press** - Squeeze the most out of your code! 🍇
-</readme.md>
+    let deepseek_api = DeepSeekApi::new(api_key);
+
+    let final_prompt = format!(
+        "<code_files>{}</code_files> \
+         <user_prompt>{}</user_prompt> \
+         <important>Only respond with the updated code files, \
+         and keep them surrounded by their file name in xml tags</important>",
+        output_file_text, args.prompt
+    );
+
+    // Create and configure an indicatif spinner with custom styling
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::with_template(&format!(
+            "   {} {{spinner}} {}",
+            "→".bright_white(),
+            "Waiting for AI response".italic().bright_white()
+        ))
+        .unwrap()
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    spinner.enable_steady_tick(Duration::from_millis(80));
+
+    // Await API call
+    let response = deepseek_api.call_deepseek(&args.system_prompt, &final_prompt).await;
+
+    // Stop the spinner
+    spinner.finish_and_clear();
+
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        "Successfully received AI response".italic().bright_white()
+    );
+
+    // STEP 3
+    println!(
+        "\n{} {}",
+        "💾".bright_yellow(),
+        "[3/3] Saving Results".bright_cyan().bold()
+    );
+
+    let press_output_dir = output_directory.join("press.output");
+    create_dir_all(&press_output_dir).expect("Couldn't create output directory");
+
+    let output_file_path = press_output_dir.join("pressed.txt");
+    let mut file = File::create(&output_file_path).expect("Couldn't create file");
+    file.write_all(response.as_bytes())
+        .expect("Couldn't write to file");
+
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        "Successfully saved results to file".italic().bright_white()
+    );
+
+    println!(
+        "   {} {}",
+        "→".bright_white(),
+        format!("{}", output_file_path.display()).bright_white(),
+    );
+
+    println!();
+    println!(
+        "{}",
+        format!("⚡ Completed in {:.2?}", start_time.elapsed())
+            .bright_white()
+            .dimmed(),
+    );
+    println!(); // Add final newline for cleaner look
+}
+
+// Rest of the functions remain unchanged
+fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let text_extensions = [
+        "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
+        "yaml", "yml", "toml", "xml",
+    ];
+    let mut text_files = Vec::new();
+
+    fn visit_dirs(
+        dir: &Path,
+        text_extensions: &[&str],
+        text_files: &mut Vec<PathBuf>,
+    ) -> Result<(), std::io::Error> {
+        for entry in read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() {
+                if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+                    if text_extensions.contains(&extension.to_lowercase().as_str()) {
+                        text_files.push(path);
+                    }
+                }
+            } else if path.is_dir() {
+                visit_dirs(&path, text_extensions, text_files)?;
+            }
+        }
+        Ok(())
+    }
+
+    visit_dirs(directory, &text_extensions, &mut text_files)?;
+    Ok(text_files)
+}
+
+fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
+    let mut combined = String::new();
+    for path in paths {
+        let mut file = BufReader::new(File::open(&path)?);
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        let filename = path.file_name().unwrap_or_default().to_string_lossy();
+        combined.push_str(&format!("<{0}>{1}</{0}>\n", filename, contents));
+    }
+    Ok(combined)
+}
+
+fn get_executable_dir() -> PathBuf {
+    let exe_path = env::current_exe().expect("Failed to get the executable path");
+    exe_path
+        .parent()
+        .expect("Failed to get the executable directory")
+        .to_path_buf()
+}
+
+fn get_api_key_path() -> PathBuf {
+    let mut path = get_executable_dir();
+    path.push("deepseek_api_key.txt");
+    path
+}
+
+fn read_api_key() -> std::io::Result<String> {
+    let path = get_api_key_path();
+    std::fs::read_to_string(path)
+}
+
+fn write_api_key(api_key: &str) -> std::io::Result<()> {
+    let path = get_api_key_path();
+    std::fs::write(path, api_key)
+}
+</main.rs>

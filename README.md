@@ -42,6 +42,7 @@ press --directories path/to/dir1 path/to/dir2 --prompt "Your custom prompt here"
 - `--directories`: Specify one or more directories to process. Separate multiple directories with a space.
 - `--output-directory`: Specify the output directory where the results will be saved. Defaults to `./`.
 - `--prompt`: Provide a custom prompt for the AI.
+- `--system-prompt`: Provide a custom system prompt for the AI.
 - `--api-key`: Provide your DeepSeek API key. This is only required the first time you run the tool.
 
 ### Example

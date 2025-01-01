@@ -1,7 +1,6 @@
 use reqwest::Client;
 use serde_json::{json, Value};
 
-const SYSTEM_PROMPT: &str = "You are a helpful assistant";
 const BASE_URL: &str = "https://api.deepseek.com";
 
 pub struct DeepSeekApi {
@@ -19,9 +18,9 @@ impl DeepSeekApi {
         }
     }
 
-    pub async fn call_deepseek(&self, user_input: &str) -> String {
+    pub async fn call_deepseek(&self, system_prompt: &str, user_input: &str) -> String {
         let messages = vec![
-            json!({"role": "system", "content": SYSTEM_PROMPT}),
+            json!({"role": "system", "content": system_prompt}),
             json!({"role": "user", "content": user_input}),
         ];
 
