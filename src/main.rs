@@ -4,13 +4,16 @@ use clap::Parser;
 use colored::*;
 use deep_seek_api::DeepSeekApi;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::env;
-use std::fs::{create_dir_all, read_dir, File};
-use std::io::{BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::{
+    env,
+    fs::{create_dir_all, read_dir, File},
+    io::{BufReader, Read, Write},
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 use tokio;
 
+/// Command-line arguments for the application
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -34,6 +37,7 @@ struct Args {
     api_key: Option<String>,
 }
 
+/// Saves individual files from the AI response to the output directory
 fn save_individual_files(response: &str, output_directory: &Path) -> Result<(), std::io::Error> {
     if output_directory.exists() {
         for entry in read_dir(output_directory)? {
@@ -94,19 +98,9 @@ async fn main() {
     );
 
     let output_directory = Path::new(&args.output_directory);
-
-    let mut directory_files = Vec::new();
-
-    for path in args.paths {
-        let path = Path::new(&path);
-        if path.is_file() {
-            directory_files.push(path.to_path_buf());
-        } else if path.is_dir() {
-            let files = get_directory_text_files(path).expect("Couldn't get list of files");
-            directory_files.extend(files);
-        }
-    }
+    let directory_files = get_files_to_process(&args.paths);
     let file_count = directory_files.len();
+
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -136,7 +130,6 @@ async fn main() {
     );
 
     let deepseek_api = DeepSeekApi::new(api_key);
-
     let final_prompt = format!(
         "<code_files>{}</code_files> \
          <user_prompt>{}</user_prompt> \
@@ -145,18 +138,7 @@ async fn main() {
         output_file_text, args.prompt
     );
 
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::with_template(&format!(
-            "   {} {{spinner}} {}",
-            "→".bright_white(),
-            "Waiting for AI response".italic().bright_white()
-        ))
-        .unwrap()
-        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    spinner.enable_steady_tick(Duration::from_millis(80));
-
+    let spinner = create_spinner();
     let response = deepseek_api
         .call_deepseek(&args.system_prompt, &final_prompt)
         .await;
@@ -204,6 +186,22 @@ async fn main() {
     println!();
 }
 
+/// Retrieves a list of files to process from the provided paths
+fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
+    let mut directory_files = Vec::new();
+    for path in paths {
+        let path = Path::new(path);
+        if path.is_file() {
+            directory_files.push(path.to_path_buf());
+        } else if path.is_dir() {
+            let files = get_directory_text_files(path).expect("Couldn't get list of files");
+            directory_files.extend(files);
+        }
+    }
+    directory_files
+}
+
+/// Recursively retrieves text files from a directory
 fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
@@ -237,6 +235,7 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
+/// Combines the contents of multiple text files into a single string
 fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
@@ -249,26 +248,44 @@ fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     Ok(combined)
 }
 
+/// Creates a spinner for indicating progress
+fn create_spinner() -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::with_template(&format!(
+            "   {} {{spinner}} {}",
+            "→".bright_white(),
+            "Waiting for AI response".italic().bright_white()
+        ))
+        .unwrap()
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    spinner.enable_steady_tick(Duration::from_millis(80));
+    spinner
+}
+
+/// Retrieves the directory of the executable
 fn get_executable_dir() -> PathBuf {
-    let exe_path = env::current_exe().expect("Failed to get the executable path");
-    exe_path
+    env::current_exe()
+        .expect("Failed to get the executable path")
         .parent()
         .expect("Failed to get the executable directory")
         .to_path_buf()
 }
 
+/// Retrieves the path to the API key file
 fn get_api_key_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("deepseek_api_key.txt");
     path
 }
 
+/// Reads the API key from the file
 fn read_api_key() -> std::io::Result<String> {
-    let path = get_api_key_path();
-    std::fs::read_to_string(path)
+    std::fs::read_to_string(get_api_key_path())
 }
 
+/// Writes the API key to the file
 fn write_api_key(api_key: &str) -> std::io::Result<()> {
-    let path = get_api_key_path();
-    std::fs::write(path, api_key)
+    std::fs::write(get_api_key_path(), api_key)
 }
