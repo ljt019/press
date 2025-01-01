@@ -7,31 +7,47 @@ use env_logger;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::reader::Reader;
 use std::{
     env,
-    fs::{create_dir_all, read_dir, File},
-    io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio;
 
+/// Command-line arguments structure
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, num_args = 1.., value_delimiter = '&', help = "Paths to directories or files to process", required = true)]
+    /// Paths to directories or files to process
+    #[arg(
+        short,
+        long,
+        num_args = 1..,
+        value_delimiter = '&',
+        help = "Paths to directories or files to process",
+        required = true
+    )]
     paths: Vec<String>,
 
+    /// Output directory
     #[arg(short, long, default_value_t = ("./").to_string(), help = "Output directory")]
     output_directory: String,
 
+    /// Prompt for the AI
     #[arg(short, long, help = "Prompt for the AI", required = true)]
     prompt: String,
 
-    #[arg(short, long, help = "System prompt for the AI", default_value_t = ("You are a helpful assistant").to_string())]
+    /// System prompt for the AI
+    #[arg(
+        short,
+        long,
+        help = "System prompt for the AI",
+        default_value_t = ("You are a helpful assistant").to_string()
+    )]
     system_prompt: String,
 
+    /// API key for DeepSeek (only required the first time)
     #[arg(
         short,
         long,
@@ -39,6 +55,7 @@ struct Args {
     )]
     api_key: Option<String>,
 
+    /// Automatically overwrite original files with the same name
     #[arg(
         short,
         long,
@@ -54,30 +71,41 @@ async fn save_individual_files(
     auto: bool,
     original_paths: &[PathBuf],
 ) -> Result<usize, std::io::Error> {
+    // Clear existing files in the output directory
     if output_directory.exists() {
-        let entries = read_dir(output_directory)?;
-        for entry_result in entries {
-            let entry = entry_result?;
+        let mut entries = tokio::fs::read_dir(output_directory).await?;
+        while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.is_file() {
                 tokio::fs::remove_file(path).await?;
             }
         }
     } else {
-        create_dir_all(output_directory)?;
+        tokio::fs::create_dir_all(output_directory).await?;
     }
 
+    // Initialize the XML reader
     let mut reader = Reader::from_str(response);
+    reader.config_mut().trim_text(true); // Corrected usage
 
-    let mut current_tag = Vec::new();
+    let mut current_filename: Option<String> = None;
     let mut current_content = String::new();
     let mut saved_files = 0;
 
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                current_tag = e.name().as_ref().to_vec();
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"file" => {
+                // Extract the filename from the 'name' attribute
+                for attr in e.attributes().with_checks(false) {
+                    if let Ok(attr) = attr {
+                        if attr.key.as_ref() == b"name" {
+                            // Decode the attribute value
+                            let value = attr.unescape_value().unwrap_or_default();
+                            current_filename = Some(value.into_owned());
+                        }
+                    }
+                }
             }
             Ok(Event::Text(e)) => {
                 match e.unescape() {
@@ -88,28 +116,32 @@ async fn save_individual_files(
                     }
                 }
             }
-            Ok(Event::End(e)) => {
-                let tag = e.name().as_ref().to_vec();
-                if tag == current_tag {
-                    let tag_str = String::from_utf8(tag.clone()).unwrap();
-                    let file_path = if tag_str == "response.txt" {
-                        output_directory.join(&tag_str).with_extension("txt")
-                    } else if auto {
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"file" => {
+                if let Some(filename) = current_filename.take() {
+                    let file_path = if auto {
                         original_paths
                             .iter()
                             .find(|path| {
-                                path.file_name().unwrap_or_default().to_string_lossy() == tag_str
+                                path.file_name().unwrap_or_default().to_string_lossy() == filename
                             })
-                            .unwrap_or(&PathBuf::from(&tag_str))
+                            .unwrap_or(&PathBuf::from(&filename))
                             .to_path_buf()
                     } else {
-                        output_directory.join(&tag_str).with_extension("txt")
+                        output_directory.join(&filename)
                     };
-                    let mut file = File::create(&file_path)?;
-                    file.write_all(current_content.trim().as_bytes())?;
+                    // Ensure the parent directory exists
+                    if let Some(parent) = file_path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    // Write the content to the file asynchronously
+                    tokio::fs::write(&file_path, current_content.trim().as_bytes()).await?;
                     saved_files += 1;
                     current_content.clear();
                 }
+            }
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
+                // Handle non-code responses if necessary
+                // For example, you might log them or save to a separate file
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -121,13 +153,12 @@ async fn save_individual_files(
         buf.clear();
     }
 
-    // Save the raw response to most_recent_response_log.txt
+    // Save the raw response to raw_response.log
     let log_file_path = output_directory.join("raw_response.log");
-    let mut log_file = File::create(log_file_path)?;
-    log_file.write_all(response.as_bytes())?;
+    tokio::fs::write(log_file_path, response.as_bytes()).await?;
     saved_files += 1;
 
-    Ok(saved_files - 1)
+    Ok(saved_files - 1) // Subtracting the log file
 }
 
 #[tokio::main]
@@ -136,6 +167,7 @@ async fn main() {
     let start_time = Instant::now();
     let args = Args::parse();
 
+    // Handle API key
     let api_key = match args.api_key {
         Some(key) => {
             write_api_key(&key).expect("Failed to save API key");
@@ -144,10 +176,12 @@ async fn main() {
         None => read_api_key().expect("API key not found. Please provide it with --api-key flag"),
     };
 
+    // Display application banner
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
     println!("{}", "│  🍇 Press v0.1.0     │".bright_magenta().bold());
     println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
+    // Step 1: Combine Files
     println!(
         "{} {}",
         "📁".bright_yellow(),
@@ -177,6 +211,7 @@ async fn main() {
             .bright_white()
     );
 
+    // Step 2: Query AI
     println!(
         "\n{} {}",
         "🤖".bright_yellow(),
@@ -191,16 +226,18 @@ async fn main() {
     let deepseek_api = DeepSeekApi::new(api_key);
     let final_prompt = format!(
         "<code_files>{}</code_files> \
-     <user_prompt>{}</user_prompt>
-     <important>Only respond with the updated text files, \
-         and keep them surrounded by their file name in xml tags like <filename.file_extension> with CDATA sections. If you must send a response other than code files, put it in <response.txt><![CDATA[Your response here]]></response.txt> tags.</important>",
+         <user_prompt>{}</user_prompt>
+         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
         output_file_text, args.prompt
     );
 
     let spinner = create_spinner();
 
-    let system_prompt = format!("<user_system_prompt>{}</user_system_prompt> <admin_system_prompt>{}</admin_system_prompt>", args.system_prompt, "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will primarily be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines.
-If a non-code response is needed surround it in <response.txt> tags so it gets saved in the relevant place.
+    let system_prompt = format!(
+        "<user_system_prompt>{}</user_system_prompt> <admin_system_prompt>{}</admin_system_prompt>",
+        args.system_prompt,
+        "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will primarily be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines.
+If a non-code response is needed, surround it in <response_txt> tags so it gets saved in the relevant place.
 
 1. **Formatting Restrictions**:
    - Do not include any code block delimiters such as ``` or markdown formatting.
@@ -208,8 +245,8 @@ If a non-code response is needed surround it in <response.txt> tags so it gets s
 
 2. **Code Integrity**:
    - Ensure that the syntax and structure of the code remain correct and functional.
-   - Only make necessary improvements or refactorings based on the user's prompt.
-");
+   - Only make necessary improvements or refactorings based on the user's prompt."
+    );
 
     let response = deepseek_api
         .call_deepseek(&system_prompt, &final_prompt)
@@ -223,6 +260,7 @@ If a non-code response is needed surround it in <response.txt> tags so it gets s
         "Successfully received AI response".italic().bright_white()
     );
 
+    // Step 3: Save Results
     println!(
         "\n{} {}",
         "💾".bright_yellow(),
@@ -230,7 +268,9 @@ If a non-code response is needed surround it in <response.txt> tags so it gets s
     );
 
     let press_output_dir = output_directory.join("press.output");
-    create_dir_all(&press_output_dir).expect("Couldn't create output directory");
+    tokio::fs::create_dir_all(&press_output_dir)
+        .await
+        .expect("Couldn't create output directory");
 
     let saved_files =
         save_individual_files(&response, &press_output_dir, args.auto, &directory_files)
@@ -295,7 +335,7 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
         text_extensions: &[&str],
         text_files: &mut Vec<PathBuf>,
     ) -> Result<(), std::io::Error> {
-        for entry in read_dir(dir)? {
+        for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
 
@@ -316,17 +356,18 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
-/// Combines the content of multiple text files into a single string with CDATA
+/// Combines the content of multiple text files into a single string with CDATA and name attributes
 async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
         let contents = tokio::fs::read_to_string(&path).await?;
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        // Wrap the contents within CDATA
+        // Wrap the contents within CDATA and store the filename as an attribute
         combined.push_str(&format!(
-            "<{0}><![CDATA[{1}]]></{0}>\n",
-            filename.replace(".", "_"), // Replace dots to ensure valid XML tags
-            contents.replace("]]>", "]]]]><![CDATA[>")  // Handle CDATA end sequence
+            "<file name=\"{0}\"><![CDATA[{1}]]></file>\n",
+            // Escape double quotes in filenames to ensure valid XML
+            filename.replace("\"", "&quot;"),
+            contents.replace("]]>", "]]]]><![CDATA[>") // Handle CDATA end sequence
         ));
     }
     Ok(combined)
