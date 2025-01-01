@@ -1,4 +1,4 @@
-# Press 🍇
+<readme.md># Press 🍇
 
 **Press** is a command-line tool designed to process and combine text files from specified directories, query the DeepSeek API with a custom prompt, and save the AI-generated response. It's particularly useful for developers who want to automate the processing of multiple code files and get AI-generated insights or modifications.
 
@@ -66,3 +66,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ---
 
 🍇 **Press** - Squeeze the most out of your code! 🍇
+</readme.md>
