@@ -9,8 +9,7 @@ use log;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::{
-    env,
-    fmt,
+    env, fmt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -142,14 +141,12 @@ async fn save_individual_files(
             Ok(Event::CData(e)) => {
                 current_content.push_str(&String::from_utf8_lossy(&e));
             }
-            Ok(Event::Text(e)) => {
-                match e.unescape() {
-                    Ok(text) => current_content.push_str(&text.into_owned()),
-                    Err(err) => {
-                        log::error!("Error unescaping text: {:?}", err);
-                    }
+            Ok(Event::Text(e)) => match e.unescape() {
+                Ok(text) => current_content.push_str(&text.into_owned()),
+                Err(err) => {
+                    log::error!("Error unescaping text: {:?}", err);
                 }
-            }
+            },
             Ok(Event::End(ref e)) if e.name().as_ref() == b"file" => {
                 if let Some(filename) = current_filename.take() {
                     let file_path = if auto {
@@ -272,7 +269,10 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
 
     let mut retries = args.retries;
     let response = loop {
-        match deepseek_api.call_deepseek(&system_prompt, &final_prompt).await {
+        match deepseek_api
+            .call_deepseek(&system_prompt, &final_prompt)
+            .await
+        {
             Ok(response) => break response,
             Err(e) if retries > 0 => {
                 retries -= 1;
@@ -300,7 +300,8 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
     let press_output_dir = output_directory.join("press.output");
     tokio::fs::create_dir_all(&press_output_dir).await?;
 
-    let saved_files = save_individual_files(&response, &press_output_dir, args.auto, &directory_files).await?;
+    let saved_files =
+        save_individual_files(&response, &press_output_dir, args.auto, &directory_files).await?;
 
     println!(
         "   {} {}",
