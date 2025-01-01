@@ -88,7 +88,6 @@ async fn save_individual_files(
     let mut reader = Reader::from_str(response);
     reader.config_mut().trim_text(true);
 
-    let mut current_filename: Option<String> = None;
     let mut current_path: Option<String> = None;
     let mut current_content = String::new();
     let mut saved_files = 0;
@@ -102,7 +101,7 @@ async fn save_individual_files(
                     if let Ok(attr) = attr {
                         if attr.key.as_ref() == b"name" {
                             let value = attr.unescape_value()?;
-                            current_filename = Some(value.into_owned());
+                            current_path = Some(value.into_owned());
                         }
                     }
                 }
@@ -110,10 +109,6 @@ async fn save_individual_files(
             Ok(Event::Start(ref e)) if e.name().as_ref() == b"new_file" => {
                 for attr in e.attributes().with_checks(false) {
                     if let Ok(attr) = attr {
-                        if attr.key.as_ref() == b"name" {
-                            let value = attr.unescape_value()?;
-                            current_filename = Some(value.into_owned());
-                        }
                         if attr.key.as_ref() == b"path" {
                             let value = attr.unescape_value()?;
                             current_path = Some(value.into_owned());
@@ -131,17 +126,15 @@ async fn save_individual_files(
                 }
             },
             Ok(Event::End(ref e)) if e.name().as_ref() == b"file" => {
-                if let Some(filename) = current_filename.take() {
+                if let Some(path) = current_path.take() {
                     let file_path = if auto {
                         original_paths
                             .iter()
-                            .find(|path| {
-                                path.file_name().unwrap_or_default().to_string_lossy() == filename
-                            })
-                            .unwrap_or(&PathBuf::from(&filename))
+                            .find(|p| p.file_name().unwrap_or_default().to_string_lossy() == path)
+                            .unwrap_or(&PathBuf::from(&path))
                             .to_path_buf()
                     } else {
-                        output_directory.join(&filename)
+                        output_directory.join(&path)
                     };
                     if let Some(parent) = file_path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
@@ -152,12 +145,8 @@ async fn save_individual_files(
                 }
             }
             Ok(Event::End(ref e)) if e.name().as_ref() == b"new_file" => {
-                if let Some(filename) = current_filename.take() {
-                    let file_path = if let Some(path) = current_path.take() {
-                        PathBuf::from(path)
-                    } else {
-                        output_directory.join(&filename)
-                    };
+                if let Some(path) = current_path.take() {
+                    let file_path = PathBuf::from(&path);
                     if let Some(parent) = file_path.parent() {
                         tokio::fs::create_dir_all(parent).await?;
                     }
@@ -255,7 +244,7 @@ async fn main() -> Result<(), AppError> {
     let final_prompt = format!(
         "<code_files>{}</code_files> \
          <user_prompt>{}</user_prompt>
-         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags if you want to create a new file send it as <new_file name=\"filename.ext\" path=\"filepath\"><![CDATA[Your file content here]]></new_file>. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
+         <important>Only respond with the updated text files. Each file should be enclosed within <file name=\"filename.ext\"><![CDATA[Your file content here]]></file> tags if you want to create a new file send it as <new_file path=\"src/yourdesiredpath/filename.ext\"><![CDATA[Your file content here]]></new_file>, all paths must be relative to the src directory. If you must send a response other than code files, put it in <response_txt><![CDATA[Your response here]]></response_txt> tags.</important>",
         output_file_text, args.prompt
     );
 
