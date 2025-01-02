@@ -9,6 +9,10 @@ Press is a CLI tool that batches text files, sends them to DeepSeek's AI with yo
 - **Smart Output**: Save responses with intelligent file parsing and organization
 - **Auto Mode**: Optionally overwrite original files with AI-generated content
 - **API Key Management**: Securely store your DeepSeek API key for future use
+- **Chunk Processing**: Split large files into manageable chunks for better AI processing
+- **Retry Mechanism**: Automatically retry failed API calls
+- **Logging Control**: Set custom log levels for debugging
+- **Output Piping**: Include previous console output in the prompt
 
 ## Installation
 
@@ -63,22 +67,31 @@ press --paths src/lib.rs tests/ --prompt "Add comprehensive tests" --api-key YOU
 - `--system-prompt`: Custom AI system message (default: "You are a helpful assistant")
 - `--api-key`: DeepSeek API key (only needed first time)
 - `--auto`: Overwrite original files with AI output
+- `--retries`: Maximum number of retries for API calls (default: 3)
+- `--chunk-size`: Size of chunks for splitting files (default: 50)
+- `--pipe-output`: Include previous console output in the prompt
+- `--log-level`: Set the log level (debug, info, warn, error) (default: info)
 
 ### Examples
 
-Refactor Code:
+Refactor Code with Retries:
 ```bash
-press --paths src tests --prompt "Refactor for better readability" --api-key YOUR_API_KEY
+press --paths src tests --prompt "Refactor for better readability" --api-key YOUR_API_KEY --retries 5
 ```
 
-Save to Custom Directory:
+Process Large Files:
 ```bash
-press --paths src utils --prompt "Optimize performance" --output-directory ./optimized
+press --paths large_file.rs --prompt "Optimize performance" --chunk-size 100
 ```
 
-Auto-Update Files:
+Debug Mode:
 ```bash
-press --paths src --prompt "Add documentation" --auto
+press --paths src --prompt "Add documentation" --log-level debug
+```
+
+Include Previous Output:
+```bash
+press --paths src --prompt "Improve error handling" --pipe-output
 ```
 
 Custom System Prompt:
