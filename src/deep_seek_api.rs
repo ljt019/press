@@ -24,7 +24,10 @@ impl DeepSeekApi {
         user_system_prompt: &str,
         user_prompt: &str,
         file_content: &str,
+        temperature: f32,
     ) -> Result<String, DeepSeekError> {
+        log::debug!("Calling DeepSeek API");
+
         let final_prompt = format!(
             "<code_files>{}</code_files> <user_prompt>{}</user_prompt> <important>{}</important>",
             file_content, user_prompt, IMPORTANT_TEXT,
@@ -40,6 +43,8 @@ impl DeepSeekApi {
             json!({"role": "user", "content": final_prompt}),
         ];
 
+        log::info!("{:?}", messages);
+
         let response = self
             .client
             .post(&format!("{}/chat/completions", &self.base_url))
@@ -47,7 +52,7 @@ impl DeepSeekApi {
             .json(&json!({
                 "model": "deepseek-chat",
                 "messages": messages,
-                "temperature": 0
+                "temperature": temperature,
             }))
             .send()
             .await?;

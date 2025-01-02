@@ -1,9 +1,13 @@
+// src/main.rs
+
+mod console_capture;
 mod deep_seek_api;
 mod errors;
-mod xml_reader;
+mod xml_reader; // Existing module
 
 use clap::Parser;
 use colored::*;
+use console_capture::get_last_console_output;
 use deep_seek_api::DeepSeekApi;
 use env_logger;
 use errors::AppError;
@@ -14,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use tokio;
+use tokio; // Import the function
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -82,6 +86,9 @@ struct Args {
         default_value_t = ("info").to_string()
     )]
     log_level: String,
+
+    #[arg(long, help = "Set the temperature for the AI", default_value_t = 0.0)]
+    temp: f32,
 }
 
 async fn save_individual_files(
@@ -117,7 +124,19 @@ async fn save_individual_files(
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let args = Args::parse();
-    
+
+    // Capture console output before initializing the logger or printing anything
+    let wrapped_previous_output = if args.pipe_output {
+        let last_output = get_last_console_output();
+        format!(
+            "<previous_console_output>\n{}\n</previous_console_output>",
+            last_output
+        )
+    } else {
+        String::new()
+    };
+
+    // Initialize logger after capturing console output to prevent logger output from being captured
     env_logger::Builder::from_default_env()
         .filter_level(match args.log_level.as_str() {
             "debug" => log::LevelFilter::Debug,
@@ -185,15 +204,15 @@ async fn main() -> Result<(), AppError> {
     let spinner = create_spinner();
 
     let mut retries = args.retries;
-    let mut prompt = args.prompt.clone();
+    let mut prompt = args.prompt;
     if args.pipe_output {
-        let last_output = get_last_console_output();
-        prompt.push_str(&format!("\n\nPrevious output:\n{}", last_output));
+        // Append the wrapped previous console output to the prompt
+        prompt.push_str(&wrapped_previous_output);
     }
 
     let response = loop {
         match deepseek_api
-            .call_deepseek(&args.system_prompt, &prompt, &output_file_text)
+            .call_deepseek(&args.system_prompt, &prompt, &output_file_text, args.temp)
             .await
         {
             Ok(response) => break response,
@@ -262,12 +281,6 @@ async fn main() -> Result<(), AppError> {
     println!();
 
     Ok(())
-}
-
-fn get_last_console_output() -> String {
-    // This is a placeholder - you'll need to implement actual console output capture
-    // For now, it returns an empty string
-    String::new()
 }
 
 fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
@@ -343,7 +356,7 @@ async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, 
     for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
         let part_content = escape_cdata(chunk.join("\n"));
         file_content.push_str(&format!(
-            "<part id=\"{}\"><![CDATA[{}]]]]><![CDATA[></part>\n",
+            "<part id=\"{}\"><![CDATA[{}]]></part>\n",
             part_id + 1,
             part_content
         ));
@@ -361,7 +374,7 @@ fn escape_filename(path: &Path) -> String {
 }
 
 fn escape_cdata(content: String) -> String {
-    content.replace("]]]]><![CDATA[>", "]]]]]]><![CDATA[><![CDATA[>")
+    content.replace("]]>", "]]]]><![CDATA[>")
 }
 
 fn create_spinner() -> ProgressBar {
