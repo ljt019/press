@@ -159,18 +159,26 @@ async fn save_individual_files(
         tokio::fs::create_dir_all(output_directory).await?;
     }
 
+    // Backup the original content of each file
+    let mut changes_log = String::new();
+    for path in original_paths {
+        let original_content = tokio::fs::read_to_string(&path).await?;
+        changes_log.push_str(&format!(
+            "{}|||{}\n",
+            path.display(),
+            original_content.replace("\n", "\\n") // Escape newlines for storage
+        ));
+    }
+
+    // Write the backup to last_run_changes.log
+    let changes_log_path = output_directory.join("last_run_changes.log");
+    tokio::fs::write(changes_log_path, changes_log).await?;
+
+    // Process the files with the AI response
     let mut xml_reader = xml_reader::XmlReader::new(response);
     let saved_files = xml_reader
         .process_file(original_paths, output_directory, auto, chunk_size)
         .await?;
-
-    // Log the changes made during this run
-    let changes_log_path = output_directory.join("last_run_changes.log");
-    let mut changes_log = String::new();
-    for path in original_paths {
-        changes_log.push_str(&format!("{}\n", path.display()));
-    }
-    tokio::fs::write(changes_log_path, changes_log).await?;
 
     let log_file_path = output_directory.join("raw_response.log");
     tokio::fs::write(log_file_path, response.as_bytes()).await?;
@@ -188,9 +196,11 @@ async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
 
     let changes_log = tokio::fs::read_to_string(&changes_log_path).await?;
     for line in changes_log.lines() {
-        let path = Path::new(line);
-        if path.exists() {
-            tokio::fs::remove_file(path).await?;
+        let parts: Vec<&str> = line.split("|||").collect();
+        if parts.len() == 2 {
+            let path = Path::new(parts[0]);
+            let original_content = parts[1].replace("\\n", "\n"); // Unescape newlines
+            tokio::fs::write(path, original_content).await?;
             println!("Rolled back: {}", path.display());
         }
     }
