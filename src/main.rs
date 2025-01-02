@@ -175,6 +175,13 @@ async fn save_individual_files(
         rollback_files: Vec::new(),
     };
 
+    // Store the original content of each file before processing
+    let mut original_contents = Vec::new();
+    for path in original_paths {
+        let content = tokio::fs::read_to_string(&path).await?;
+        original_contents.push((path.clone(), content));
+    }
+
     // Process the files with the AI response
     let mut xml_reader = xml_reader::XmlReader::new(response);
     let saved_files = xml_reader
@@ -182,8 +189,7 @@ async fn save_individual_files(
         .await?;
 
     // Compare original and new content to track modified files
-    for path in original_paths {
-        let original_content = tokio::fs::read_to_string(&path).await?;
+    for (path, original_content) in original_contents {
         let new_content = tokio::fs::read_to_string(&path).await?;
 
         if original_content != new_content {
