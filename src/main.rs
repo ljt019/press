@@ -83,7 +83,7 @@ struct Args {
     #[arg(
         long,
         help = "Set the log level (debug, info, warn, error)",
-        default_value_t = ("info").to_string()
+        default_value_t = ("off").to_string()
     )]
     log_level: String,
 
@@ -143,7 +143,7 @@ async fn main() -> Result<(), AppError> {
             "info" => log::LevelFilter::Info,
             "warn" => log::LevelFilter::Warn,
             "error" => log::LevelFilter::Error,
-            _ => log::LevelFilter::Info,
+            _ => log::LevelFilter::Off,
         })
         .init();
 

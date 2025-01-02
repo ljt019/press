@@ -12,7 +12,8 @@ Press is a CLI tool that batches text files, sends them to DeepSeek's AI with yo
 - **Chunk Processing**: Split large files into manageable chunks for better AI processing
 - **Retry Mechanism**: Automatically retry failed API calls
 - **Logging Control**: Set custom log levels for debugging
-- **Output Piping**: Include previous console output in the prompt
+- **Output Piping**: Include previous console output in the prompt by capturing it with winApi
+- **Temperature Control**: Adjust the creativity level of AI responses
 
 ## Installation
 
@@ -71,6 +72,7 @@ press --paths src/lib.rs tests/ --prompt "Add comprehensive tests" --api-key YOU
 - `--chunk-size`: Size of chunks for splitting files (default: 50)
 - `--pipe-output`: Include previous console output in the prompt
 - `--log-level`: Set the log level (debug, info, warn, error) (default: info)
+- `--temp`: Set the temperature for AI responses (0.0 to 1.0, default: 0.0)
 
 ### Examples
 
@@ -97,6 +99,11 @@ press --paths src --prompt "Improve error handling" --pipe-output
 Custom System Prompt:
 ```bash
 press --paths project/src --prompt "Improve error handling" --system-prompt "You are a senior engineer"
+```
+
+Creative Mode:
+```bash
+press --paths src --prompt "Generate creative solutions" --temp 0.7
 ```
 
 🍇 **Press** - Squeeze the most out of your code!
