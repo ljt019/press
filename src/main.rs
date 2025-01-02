@@ -16,6 +16,8 @@ use std::{
 };
 use tokio;
 
+const CHUNK_SIZE: usize = 50;
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -275,34 +277,43 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
 async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
-        let contents = tokio::fs::read_to_string(&path).await?;
-        let lines: Vec<&str> = contents.lines().collect();
-        let num_parts = (lines.len() + 49) / 50; // Ceiling division for number of parts
-
-        let filename = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .replace("\"", "&quot;");
-
-        combined.push_str(&format!(
-            "<file path=\"{}\" parts=\"{}\">\n",
-            filename, num_parts
-        ));
-
-        for (part_id, chunk) in lines.chunks(50).enumerate() {
-            let part_content: String = chunk.join("\n");
-            let cdata_content = part_content.replace("]]>", "]]]]><![CDATA[>");
-            combined.push_str(&format!(
-                "<part id=\"{}\"><![CDATA[{}]]></part>\n",
-                part_id + 1,
-                cdata_content
-            ));
-        }
-
-        combined.push_str("</file>\n");
+        let file_content = read_and_format_file(&path).await?;
+        combined.push_str(&file_content);
     }
     Ok(combined)
+}
+
+async fn read_and_format_file(path: &Path) -> Result<String, std::io::Error> {
+    let contents = tokio::fs::read_to_string(path).await?;
+    let lines: Vec<&str> = contents.lines().collect();
+    let num_parts = (lines.len() + CHUNK_SIZE - 1) / CHUNK_SIZE; // Ceiling division for number of parts
+
+    let filename = escape_filename(path);
+
+    let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", filename, num_parts);
+
+    for (part_id, chunk) in lines.chunks(CHUNK_SIZE).enumerate() {
+        let part_content = escape_cdata(chunk.join("\n"));
+        file_content.push_str(&format!(
+            "<part id=\"{}\"><![CDATA[{}]]></part>\n",
+            part_id + 1,
+            part_content
+        ));
+    }
+
+    file_content.push_str("</file>\n");
+    Ok(file_content)
+}
+
+fn escape_filename(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace("\"", "&quot;")
+}
+
+fn escape_cdata(content: String) -> String {
+    content.replace("]]>", "]]]]><![CDATA[>")
 }
 
 fn create_spinner() -> ProgressBar {

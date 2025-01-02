@@ -1,4 +1,5 @@
 use crate::AppError;
+use crate::CHUNK_SIZE;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::path::{Path, PathBuf};
@@ -103,8 +104,10 @@ impl<'a> XmlReader<'a> {
                             let original_content =
                                 tokio::fs::read_to_string(&original_file_path).await?;
                             let lines: Vec<&str> = original_content.lines().collect();
-                            let mut parts: Vec<String> =
-                                lines.chunks(50).map(|chunk| chunk.join("\n")).collect();
+                            let mut parts: Vec<String> = lines
+                                .chunks(CHUNK_SIZE)
+                                .map(|chunk| chunk.join("\n"))
+                                .collect();
 
                             for (part_id, content) in self.current_parts.drain(..) {
                                 if part_id > 0 && part_id <= parts.len() {
