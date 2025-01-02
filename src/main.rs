@@ -9,8 +9,6 @@ use env_logger;
 use errors::AppError;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
-use quick_xml::events::Event;
-use quick_xml::reader::Reader;
 use std::{
     env,
     path::{Path, PathBuf},
@@ -122,7 +120,7 @@ async fn main() -> Result<(), AppError> {
     );
 
     let output_directory = Path::new(&args.output_directory);
-    let directory_files = get_files_to_press(&args.paths);
+    let directory_files = get_files_to_process(&args.paths);
     let file_count = directory_files.len();
 
     println!(
@@ -225,7 +223,7 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
+fn get_files_to_process(paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
         let path = Path::new(path);

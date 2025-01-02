@@ -6,6 +6,7 @@ use tokio;
 
 pub struct XmlReader<'a> {
     reader: Reader<&'a [u8]>,
+    #[allow(dead_code)]
     buf: Vec<u8>,
     current_path: Option<String>,
     current_parts: Vec<(usize, String)>,
