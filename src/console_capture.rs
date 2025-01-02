@@ -22,7 +22,7 @@ fn wide_to_string(wide: &[u16]) -> String {
 /// # Returns
 ///
 /// A `String` containing the captured console output.
-pub fn get_last_console_output() -> String {
+pub fn get_last_console_output(num_to_capture: usize) -> String {
     unsafe {
         // Get the handle to the standard output
         let handle: HANDLE = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -42,7 +42,7 @@ pub fn get_last_console_output() -> String {
         let buffer_height = csbi.dwSize.Y as usize;
 
         // Define how many lines you want to capture
-        let lines_to_capture = 10.min(buffer_height); // Capture last 10 lines or less
+        let lines_to_capture = num_to_capture.min(buffer_height); // Capture last 10 lines or less
 
         let mut output = String::new();
 

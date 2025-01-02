@@ -5,7 +5,7 @@ mod deep_seek_api;
 mod errors;
 mod xml_reader; // Existing module
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use colored::*;
 use console_capture::get_last_console_output;
 use deep_seek_api::DeepSeekApi;
@@ -13,46 +13,31 @@ use env_logger;
 use errors::AppError;
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
+use serde::{Deserialize, Serialize};
 use std::{
-    env,
+    env, fs,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use tokio; // Import the function
+use tokio;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(
         short,
         long,
         num_args = 1..,
         value_delimiter = '&',
         help = "Paths to directories or files to process",
-        required = true
     )]
     paths: Vec<String>,
 
-    #[arg(short, long, default_value_t = ("./").to_string(), help = "Output directory")]
-    output_directory: String,
-
-    #[arg(short, long, help = "Prompt for the AI", required = true)]
-    prompt: String,
-
-    #[arg(
-        short,
-        long,
-        help = "System prompt for the AI",
-        default_value_t = ("You are a helpful assistant").to_string()
-    )]
-    system_prompt: String,
-
-    #[arg(
-        short,
-        long,
-        help = "API key for DeepSeek (only required the first time)"
-    )]
-    api_key: Option<String>,
+    #[arg(short, long, help = "Prompt for the AI")]
+    prompt: Option<String>,
 
     #[arg(
         short,
@@ -62,33 +47,12 @@ struct Args {
     auto: bool,
 
     #[arg(
-        short,
         long,
-        help = "Maximum number of retries for API calls",
-        default_value_t = 3
+        num_args = 0..=1,
+        default_missing_value = "10",
+        help = "Pipe the last N lines of console output to the AI. Default: 10"
     )]
-    retries: u32,
-
-    #[arg(
-        short,
-        long,
-        help = "Chunk size for splitting files",
-        default_value_t = 50
-    )]
-    chunk_size: usize,
-
-    #[arg(long, help = "Pipe the last console output to the prompt")]
-    pipe_output: bool,
-
-    #[arg(
-        long,
-        help = "Set the log level (debug, info, warn, error)",
-        default_value_t = ("off").to_string()
-    )]
-    log_level: String,
-
-    #[arg(long, help = "Set the temperature for the AI", default_value_t = 0.0)]
-    temp: f32,
+    pipe_output: Option<usize>,
 
     #[arg(
         short,
@@ -98,6 +62,79 @@ struct Args {
         help = "Paths to files or directories to ignore"
     )]
     ignore: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Manage configuration options
+    Config {
+        #[arg(long, help = "Set the chunk size for splitting files")]
+        set_chunk_size: Option<usize>,
+
+        #[arg(long, help = "Set the log level (debug, info, warn, error)")]
+        set_log_level: Option<String>,
+
+        #[arg(long, help = "Set the output directory")]
+        set_output_directory: Option<String>,
+
+        #[arg(long, help = "Set the maximum number of retries for API calls")]
+        set_retries: Option<u32>,
+    },
+
+    /// Manage model configuration options
+    ModelConfig {
+        #[arg(long, help = "Set the API key for DeepSeek")]
+        set_api_key: Option<String>,
+
+        #[arg(long, help = "Set the system prompt for the AI")]
+        set_system_prompt: Option<String>,
+
+        #[arg(long, help = "Set the temperature for the AI")]
+        set_temperature: Option<f32>,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    chunk_size: usize,
+    api_key: Option<String>,
+    log_level: String,
+    output_directory: String,
+    system_prompt: String,
+    temperature: f32,
+    retries: u32,
+}
+
+fn get_config_path() -> PathBuf {
+    let mut path = get_executable_dir();
+    path.push("config.toml");
+    path
+}
+
+fn read_config() -> std::io::Result<Config> {
+    let config_path = get_config_path();
+    if !config_path.exists() {
+        // Create default config if it doesn't exist
+        let default_config = Config {
+            chunk_size: 50,
+            api_key: None,
+            log_level: "off".to_string(),
+            output_directory: "./".to_string(),
+            system_prompt: "You are a helpful assistant".to_string(),
+            temperature: 0.0,
+            retries: 3,
+        };
+        write_config(&default_config)?;
+    }
+    let config_str = fs::read_to_string(config_path)?;
+    let config: Config = toml::from_str(&config_str).expect("Failed to parse config");
+    Ok(config)
+}
+
+fn write_config(config: &Config) -> std::io::Result<()> {
+    let config_path = get_config_path();
+    let config_str = toml::to_string(config).expect("Failed to serialize config");
+    fs::write(config_path, config_str)
 }
 
 async fn save_individual_files(
@@ -134,9 +171,81 @@ async fn save_individual_files(
 async fn main() -> Result<(), AppError> {
     let args = Args::parse();
 
+    // Handle config subcommand
+    if let Some(Commands::Config {
+        set_chunk_size,
+        set_log_level,
+        set_output_directory,
+        set_retries,
+    }) = args.command
+    {
+        let mut config = read_config()?;
+
+        if let Some(chunk_size) = set_chunk_size {
+            config.chunk_size = chunk_size;
+            println!("Chunk size set to {}", chunk_size);
+        }
+
+        if let Some(log_level) = set_log_level {
+            config.log_level = log_level.clone();
+            println!("Log level set to {}", log_level);
+        }
+
+        if let Some(output_directory) = set_output_directory {
+            config.output_directory = output_directory.clone();
+            println!("Output directory set to {}", output_directory);
+        }
+
+        if let Some(retries) = set_retries {
+            config.retries = retries;
+            println!("Retries set to {}", retries);
+        }
+
+        write_config(&config)?;
+        return Ok(());
+    }
+
+    // Handle model-config subcommand
+    if let Some(Commands::ModelConfig {
+        set_api_key,
+        set_system_prompt,
+        set_temperature,
+    }) = args.command
+    {
+        let mut config = read_config()?;
+
+        if let Some(api_key) = set_api_key {
+            config.api_key = Some(api_key.clone());
+            println!("API key set");
+        }
+
+        if let Some(system_prompt) = set_system_prompt {
+            config.system_prompt = system_prompt.clone();
+            println!("System prompt set to: {}", system_prompt);
+        }
+
+        if let Some(temperature) = set_temperature {
+            config.temperature = temperature;
+            println!("Temperature set to: {}", temperature);
+        }
+
+        write_config(&config)?;
+        return Ok(());
+    }
+
+    // Ensure prompt is provided
+    let prompt = args.prompt.ok_or(AppError::MissingPrompt)?;
+
+    // Read config.toml
+    let config = read_config()?;
+    let chunk_size = config.chunk_size;
+
+    // Handle API key
+    let api_key = config.api_key.ok_or(AppError::MissingApiKey)?;
+
     // Capture console output before initializing the logger or printing anything
-    let wrapped_previous_output = if args.pipe_output {
-        let last_output = get_last_console_output();
+    let wrapped_previous_output = if let Some(num_to_capture) = args.pipe_output {
+        let last_output = get_last_console_output(num_to_capture);
         format!(
             "<previous_console_output>\n{}\n</previous_console_output>",
             last_output
@@ -147,7 +256,7 @@ async fn main() -> Result<(), AppError> {
 
     // Initialize logger after capturing console output to prevent logger output from being captured
     env_logger::Builder::from_default_env()
-        .filter_level(match args.log_level.as_str() {
+        .filter_level(match config.log_level.as_str() {
             "debug" => log::LevelFilter::Debug,
             "info" => log::LevelFilter::Info,
             "warn" => log::LevelFilter::Warn,
@@ -157,14 +266,6 @@ async fn main() -> Result<(), AppError> {
         .init();
 
     let start_time = Instant::now();
-
-    let api_key = match args.api_key {
-        Some(key) => {
-            write_api_key(&key)?;
-            key
-        }
-        None => read_api_key()?,
-    };
 
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
     println!("{}", "│  🍇 Press v0.5.0     │".bright_magenta().bold());
@@ -176,7 +277,7 @@ async fn main() -> Result<(), AppError> {
         "[1/3] 'Pressing' Files".bright_cyan().bold()
     );
 
-    let output_directory = Path::new(&args.output_directory);
+    let output_directory = Path::new(&config.output_directory);
     let directory_files = get_files_to_press(&args.paths, &args.ignore);
     let file_count = directory_files.len();
 
@@ -188,7 +289,7 @@ async fn main() -> Result<(), AppError> {
             .bright_white()
     );
 
-    let output_file_text = combine_text_files(directory_files.clone(), args.chunk_size).await?;
+    let output_file_text = combine_text_files(directory_files.clone(), chunk_size).await?;
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -212,16 +313,21 @@ async fn main() -> Result<(), AppError> {
 
     let spinner = create_spinner();
 
-    let mut retries = args.retries;
-    let mut prompt = args.prompt;
-    if args.pipe_output {
+    let mut retries = config.retries;
+    let mut prompt = prompt;
+    if args.pipe_output.is_some() {
         // Append the wrapped previous console output to the prompt
         prompt.push_str(&wrapped_previous_output);
     }
 
     let response = loop {
         match deepseek_api
-            .call_deepseek(&args.system_prompt, &prompt, &output_file_text, args.temp)
+            .call_deepseek(
+                &config.system_prompt,
+                &prompt,
+                &output_file_text,
+                config.temperature,
+            )
             .await
         {
             Ok(response) => break response,
@@ -256,7 +362,7 @@ async fn main() -> Result<(), AppError> {
         &press_output_dir,
         args.auto,
         &directory_files,
-        args.chunk_size,
+        chunk_size,
     )
     .await?;
 
@@ -427,18 +533,4 @@ fn get_executable_dir() -> PathBuf {
         .parent()
         .expect("Failed to get the executable directory")
         .to_path_buf()
-}
-
-fn get_api_key_path() -> PathBuf {
-    let mut path = get_executable_dir();
-    path.push("deepseek_api_key.txt");
-    path
-}
-
-fn read_api_key() -> std::io::Result<String> {
-    std::fs::read_to_string(get_api_key_path())
-}
-
-fn write_api_key(api_key: &str) -> std::io::Result<()> {
-    std::fs::write(get_api_key_path(), api_key)
 }

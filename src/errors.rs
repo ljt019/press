@@ -3,6 +3,7 @@ use reqwest;
 use serde_json;
 use std::fmt;
 use thiserror::Error;
+use toml;
 
 #[derive(Error, Debug)]
 pub enum DeepSeekError {
@@ -19,6 +20,9 @@ pub enum AppError {
     IoError(std::io::Error),
     DeepSeekError(DeepSeekError),
     XmlError(quick_xml::Error),
+    TomlError(toml::de::Error),
+    MissingPrompt,
+    MissingApiKey,
 }
 
 impl fmt::Display for AppError {
@@ -27,6 +31,9 @@ impl fmt::Display for AppError {
             AppError::IoError(e) => write!(f, "IO error: {}", e),
             AppError::DeepSeekError(e) => write!(f, "DeepSeek API error: {}", e),
             AppError::XmlError(e) => write!(f, "XML parsing error: {}", e),
+            AppError::TomlError(e) => write!(f, "TOML parsing error: {}", e),
+            AppError::MissingPrompt => write!(f, "Prompt is required"),
+            AppError::MissingApiKey => write!(f, "API key is required"),
         }
     }
 }
@@ -34,6 +41,12 @@ impl fmt::Display for AppError {
 impl From<std::io::Error> for AppError {
     fn from(err: std::io::Error) -> Self {
         AppError::IoError(err)
+    }
+}
+
+impl From<toml::de::Error> for AppError {
+    fn from(err: toml::de::Error) -> Self {
+        AppError::TomlError(err)
     }
 }
 

@@ -15,3 +15,5 @@ serde_json = "1.0.134"
 thiserror = "2.0.9"
 tokio = { version = "1.42.0", features = ["full"] }
 winapi = { version = "0.3", features = ["consoleapi", "wincon", "processenv", "winbase"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.7"
