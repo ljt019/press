@@ -1,17 +1,17 @@
 // src/main.rs
 
+mod cli_display;
 mod console_capture;
 mod deep_seek_api;
 mod errors;
-mod xml_reader; // Existing module
+mod xml_reader;
 
 use clap::{Parser, Subcommand};
-use colored::*;
+use cli_display::CliDisplayManager;
 use console_capture::get_last_console_output;
 use deep_seek_api::DeepSeekApi;
 use env_logger;
 use errors::AppError;
-use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -92,6 +92,9 @@ enum Commands {
         #[arg(long, help = "Set the temperature for the AI")]
         set_temperature: Option<f32>,
     },
+
+    /// Rollback changes made by the last run
+    Rollback,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -161,15 +164,56 @@ async fn save_individual_files(
         .process_file(original_paths, output_directory, auto, chunk_size)
         .await?;
 
+    // Log the changes made during this run
+    let changes_log_path = output_directory.join("last_run_changes.log");
+    let mut changes_log = String::new();
+    for path in original_paths {
+        changes_log.push_str(&format!("{}\n", path.display()));
+    }
+    tokio::fs::write(changes_log_path, changes_log).await?;
+
     let log_file_path = output_directory.join("raw_response.log");
     tokio::fs::write(log_file_path, response.as_bytes()).await?;
 
     Ok(saved_files)
 }
 
+async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
+    let changes_log_path = output_directory.join("last_run_changes.log");
+    if !changes_log_path.exists() {
+        return Err(AppError::RollbackError(
+            "No changes to rollback".to_string(),
+        ));
+    }
+
+    let changes_log = tokio::fs::read_to_string(&changes_log_path).await?;
+    for line in changes_log.lines() {
+        let path = Path::new(line);
+        if path.exists() {
+            tokio::fs::remove_file(path).await?;
+            println!("Rolled back: {}", path.display());
+        }
+    }
+
+    // Remove the changes log file after rollback
+    tokio::fs::remove_file(changes_log_path).await?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let args = Args::parse();
+
+    // Handle rollback subcommand
+    if let Some(Commands::Rollback) = args.command {
+        let config = read_config()?;
+        let output_directory = Path::new(&config.output_directory);
+        return rollback_last_run(output_directory).await;
+    }
+
+    // Create the CLI display manager
+    let mut display_manager = CliDisplayManager::new();
 
     // Handle config subcommand
     if let Some(Commands::Config {
@@ -267,51 +311,22 @@ async fn main() -> Result<(), AppError> {
 
     let start_time = Instant::now();
 
-    println!("\n{}", "╭──────────────────────╮".bright_magenta());
-    println!("{}", "│  🍇 Press v0.5.0     │".bright_magenta().bold());
-    println!("{}\n", "╰──────────────────────╯".bright_magenta());
-
-    println!(
-        "{} {}",
-        "📁".bright_yellow(),
-        "[1/3] 'Pressing' Files".bright_cyan().bold()
-    );
+    display_manager.print_header();
 
     let output_directory = Path::new(&config.output_directory);
     let directory_files = get_files_to_press(&args.paths, &args.ignore);
     let file_count = directory_files.len();
 
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        format!("Found {} files to process", file_count)
-            .italic()
-            .bright_white()
-    );
+    display_manager.print_file_processing_start(file_count);
 
     let output_file_text = combine_text_files(directory_files.clone(), chunk_size).await?;
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        "Successfully combined file contents"
-            .italic()
-            .bright_white()
-    );
+    display_manager.print_file_combining_success();
 
-    println!(
-        "\n{} {}",
-        "🤖".bright_yellow(),
-        "[2/3] Querying DeepSeek API".bright_cyan().bold()
-    );
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        "Preparing prompt for AI".italic().bright_white()
-    );
+    display_manager.print_api_query_start();
 
     let deepseek_api = DeepSeekApi::new(api_key);
 
-    let spinner = create_spinner();
+    display_manager.start_spinner();
 
     let mut retries = config.retries;
     let mut prompt = prompt;
@@ -340,19 +355,11 @@ async fn main() -> Result<(), AppError> {
         }
     };
 
-    spinner.finish_and_clear();
+    display_manager.stop_spinner();
 
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        "Successfully received AI response".italic().bright_white()
-    );
+    display_manager.print_api_response_success();
 
-    println!(
-        "\n{} {}",
-        "💾".bright_yellow(),
-        "[3/3] Saving Results".bright_cyan().bold()
-    );
+    display_manager.print_saving_results_start();
 
     let press_output_dir = output_directory.join("press.output");
     tokio::fs::create_dir_all(&press_output_dir).await?;
@@ -366,34 +373,9 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
 
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        "Successfully saved results to individual files"
-            .italic()
-            .bright_white()
-    );
+    display_manager.print_saving_results_success(&press_output_dir.display().to_string());
 
-    println!(
-        "   {} {}",
-        "→".bright_white(),
-        format!("{}", press_output_dir.display()).bright_white(),
-    );
-
-    println!();
-    println!(
-        "{}",
-        format!("⚡ Modified {} file(s)", saved_files)
-            .bright_white()
-            .dimmed(),
-    );
-    println!(
-        "{}",
-        format!("⚡ Completed in {:.2?}", start_time.elapsed())
-            .bright_white()
-            .dimmed(),
-    );
-    println!();
+    display_manager.print_footer(saved_files, start_time.elapsed());
 
     Ok(())
 }
@@ -510,21 +492,6 @@ fn escape_filename(path: &Path) -> String {
 
 fn escape_cdata(content: String) -> String {
     content.replace("]]>", "]]]]><![CDATA[>")
-}
-
-fn create_spinner() -> ProgressBar {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::with_template(&format!(
-            "   {} {{spinner}} {}",
-            "→".bright_white(),
-            "Waiting for AI response".italic().bright_white()
-        ))
-        .unwrap()
-        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    spinner.enable_steady_tick(Duration::from_millis(80));
-    spinner
 }
 
 fn get_executable_dir() -> PathBuf {

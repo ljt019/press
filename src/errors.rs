@@ -23,6 +23,7 @@ pub enum AppError {
     TomlError(toml::de::Error),
     MissingPrompt,
     MissingApiKey,
+    RollbackError(String),
 }
 
 impl fmt::Display for AppError {
@@ -34,6 +35,7 @@ impl fmt::Display for AppError {
             AppError::TomlError(e) => write!(f, "TOML parsing error: {}", e),
             AppError::MissingPrompt => write!(f, "Prompt is required"),
             AppError::MissingApiKey => write!(f, "API key is required"),
+            AppError::RollbackError(e) => write!(f, "Rollback error: {}", e),
         }
     }
 }
