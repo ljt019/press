@@ -175,21 +175,27 @@ async fn save_individual_files(
         rollback_files: Vec::new(),
     };
 
-    for path in original_paths {
-        let original_content = tokio::fs::read_to_string(&path).await?;
-        let backup_path = rollback_dir.join(path.file_name().unwrap());
-        tokio::fs::write(&backup_path, &original_content).await?;
-        rollback_config.rollback_files.push((
-            path.display().to_string(),
-            backup_path.display().to_string(),
-        ));
-    }
-
     // Process the files with the AI response
     let mut xml_reader = xml_reader::XmlReader::new(response);
     let saved_files = xml_reader
         .process_file(original_paths, output_directory, auto, chunk_size)
         .await?;
+
+    // Compare original and new content to track modified files
+    for path in original_paths {
+        let original_content = tokio::fs::read_to_string(&path).await?;
+        let new_content = tokio::fs::read_to_string(&path).await?;
+
+        if original_content != new_content {
+            // Backup the original content if the file was modified
+            let backup_path = rollback_dir.join(path.file_name().unwrap());
+            tokio::fs::write(&backup_path, &original_content).await?;
+            rollback_config.rollback_files.push((
+                path.display().to_string(),
+                backup_path.display().to_string(),
+            ));
+        }
+    }
 
     // Track new files created during the run
     for path in original_paths {
