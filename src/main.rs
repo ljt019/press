@@ -1,5 +1,6 @@
 mod deep_seek_api;
 mod errors;
+mod xml_reader;
 
 use clap::Parser;
 use colored::*;
@@ -85,152 +86,15 @@ async fn save_individual_files(
         tokio::fs::create_dir_all(output_directory).await?;
     }
 
-    let mut reader = Reader::from_str(response);
-    reader.config_mut().trim_text(true);
-
-    let mut current_path: Option<String> = None;
-    let mut current_parts: Vec<(usize, String)> = Vec::new(); // (part_id, content)
-    let mut saved_files = 0;
-    let mut response_txt_content = String::new();
-
-    let mut buf = Vec::new();
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"file" => {
-                for attr in e.attributes().with_checks(false) {
-                    if let Ok(attr) = attr {
-                        if attr.key.as_ref() == b"path" {
-                            let value = attr.unescape_value()?;
-                            current_path = Some(value.into_owned());
-                        }
-                    }
-                }
-            }
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"new_file" => {
-                for attr in e.attributes().with_checks(false) {
-                    if let Ok(attr) = attr {
-                        if attr.key.as_ref() == b"path" {
-                            let value = attr.unescape_value()?;
-                            current_path = Some(value.into_owned());
-                        }
-                    }
-                }
-            }
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"part" => {
-                for attr in e.attributes().with_checks(false) {
-                    if let Ok(attr) = attr {
-                        if attr.key.as_ref() == b"id" {
-                            let value = attr.unescape_value()?;
-                            let part_id = value.parse::<usize>().unwrap_or(0);
-                            current_parts.push((part_id, String::new()));
-                        }
-                    }
-                }
-            }
-            Ok(Event::CData(e)) => {
-                if let Some(last_part) = current_parts.last_mut() {
-                    last_part.1.push_str(&String::from_utf8_lossy(&e));
-                }
-            }
-            Ok(Event::Text(e)) => match e.unescape() {
-                Ok(text) => {
-                    if let Some(last_part) = current_parts.last_mut() {
-                        last_part.1.push_str(&text.into_owned());
-                    }
-                }
-                Err(err) => {
-                    log::error!("Error unescaping text: {:?}", err);
-                }
-            },
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"file" => {
-                if let Some(path) = current_path.take() {
-                    // Find the original file path
-                    let fallback = PathBuf::from(&path);
-                    let original_file_path = original_paths
-                        .iter()
-                        .find(|p| p.to_string_lossy().ends_with(&path))
-                        .unwrap_or(&fallback);
-
-                    // Read the original file and split it into parts
-                    let original_content = tokio::fs::read_to_string(&original_file_path).await?;
-                    let lines: Vec<&str> = original_content.lines().collect();
-                    let mut parts: Vec<String> =
-                        lines.chunks(50).map(|chunk| chunk.join("\n")).collect();
-
-                    // Replace the updated parts
-                    for (part_id, content) in current_parts.drain(..) {
-                        if part_id > 0 && part_id <= parts.len() {
-                            parts[part_id - 1] = content;
-                        }
-                    }
-
-                    // Reconstruct the file content
-                    let new_content = parts.join("\n");
-
-                    // Determine the output path
-                    let output_file_path = if auto {
-                        // Overwrite the original file
-                        original_file_path.to_path_buf()
-                    } else {
-                        // Save the modified file in the press.output directory
-                        output_directory.join(&path)
-                    };
-
-                    // Ensure the parent directory exists
-                    if let Some(parent) = output_file_path.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-
-                    // Save the file
-                    tokio::fs::write(&output_file_path, new_content.as_bytes()).await?;
-                    saved_files += 1;
-                }
-            }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"new_file" => {
-                if let Some(path) = current_path.take() {
-                    let file_path = PathBuf::from(&path);
-                    if let Some(parent) = file_path.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-                    let new_content = current_parts
-                        .drain(..)
-                        .map(|(_, content)| content)
-                        .collect::<Vec<String>>()
-                        .join("\n");
-                    tokio::fs::write(&file_path, new_content.as_bytes()).await?;
-                    saved_files += 1;
-                }
-            }
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"response_txt" => {
-                current_parts.clear();
-            }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"response_txt" => {
-                response_txt_content = current_parts
-                    .drain(..)
-                    .map(|(_, content)| content)
-                    .collect::<Vec<String>>()
-                    .join("\n");
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => {
-                log::error!("Error parsing XML: {:?}", e);
-                break;
-            }
-            _ => (),
-        }
-        buf.clear();
-    }
-
-    if !response_txt_content.is_empty() {
-        let response_txt_path = output_directory.join("response.txt");
-        tokio::fs::write(response_txt_path, response_txt_content.as_bytes()).await?;
-    }
+    let mut xml_reader = xml_reader::XmlReader::new(response);
+    let saved_files = xml_reader
+        .process_file(original_paths, output_directory, auto)
+        .await?;
 
     let log_file_path = output_directory.join("raw_response.log");
     tokio::fs::write(log_file_path, response.as_bytes()).await?;
-    saved_files += 1;
 
-    Ok(saved_files - 1)
+    Ok(saved_files)
 }
 
 #[tokio::main]
@@ -290,38 +154,13 @@ async fn main() -> Result<(), AppError> {
     );
 
     let deepseek_api = DeepSeekApi::new(api_key);
-    let final_prompt = format!(
-    "<code_files>{}</code_files> \
-     <user_prompt>{}</user_prompt>
-     <important>Respond only with updated files using these formats:
-1. Modify existing file: <file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
-2. Create new file: <new_file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[content]]></part></new_file>
-3. Non-code response: <response_txt><![CDATA[message]]></response_txt>
-All paths must be relative to the 'src' directory. Only include the parts that need to be changed for each file, not all parts.</important>",
-    output_file_text, args.prompt
-);
 
     let spinner = create_spinner();
-
-    let system_prompt = format!(
-        "<user_system_prompt>{}</user_system_prompt> <admin_system_prompt>{}</admin_system_prompt>",
-        args.system_prompt,
-        "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will primarily be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines.
-If a non-code response is needed, surround it in <response_txt> tags so it gets saved in the relevant place.
-
-1. **Formatting Restrictions**:
-   - Do not include any code block delimiters such as ``` or markdown formatting.
-   - Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
-
-2. **Code Integrity**:
-   - Ensure that the syntax and structure of the code remain correct and functional.
-   - Only make necessary improvements or refactorings based on the user's prompt."
-    );
 
     let mut retries = args.retries;
     let response = loop {
         match deepseek_api
-            .call_deepseek(&system_prompt, &final_prompt)
+            .call_deepseek(&args.system_prompt, &args.prompt, &output_file_text)
             .await
         {
             Ok(response) => break response,
