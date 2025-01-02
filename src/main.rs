@@ -167,7 +167,7 @@ async fn main() -> Result<(), AppError> {
     };
 
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
-    println!("{}", "│  🍇 Press v0.4.0     │".bright_magenta().bold());
+    println!("{}", "│  🍇 Press v0.5.0     │".bright_magenta().bold());
     println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
     println!(
@@ -320,7 +320,10 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
     false
 }
 
-fn get_directory_text_files(directory: &Path, ignore_paths: &[String]) -> Result<Vec<PathBuf>, std::io::Error> {
+fn get_directory_text_files(
+    directory: &Path,
+    ignore_paths: &[String],
+) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
         "yaml", "yml", "toml", "xml", "tsx",
