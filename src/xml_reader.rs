@@ -1,5 +1,4 @@
 use crate::AppError;
-use crate::CHUNK_SIZE;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::path::{Path, PathBuf};
@@ -70,6 +69,7 @@ impl<'a> XmlReader<'a> {
         original_paths: &[PathBuf],
         output_directory: &Path,
         auto: bool,
+        chunk_size: usize,
     ) -> Result<usize, AppError> {
         let mut saved_files = 0;
         let mut buf = Vec::new();
@@ -105,7 +105,7 @@ impl<'a> XmlReader<'a> {
                                 tokio::fs::read_to_string(&original_file_path).await?;
                             let lines: Vec<&str> = original_content.lines().collect();
                             let mut parts: Vec<String> = lines
-                                .chunks(CHUNK_SIZE)
+                                .chunks(chunk_size)
                                 .map(|chunk| chunk.join("\n"))
                                 .collect();
 

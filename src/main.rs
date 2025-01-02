@@ -16,8 +16,6 @@ use std::{
 };
 use tokio;
 
-const CHUNK_SIZE: usize = 50;
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -66,6 +64,14 @@ struct Args {
         default_value_t = 3
     )]
     retries: u32,
+
+    #[arg(
+        short,
+        long,
+        help = "Chunk size for splitting files",
+        default_value_t = 50
+    )]
+    chunk_size: usize,
 }
 
 async fn save_individual_files(
@@ -73,6 +79,7 @@ async fn save_individual_files(
     output_directory: &Path,
     auto: bool,
     original_paths: &[PathBuf],
+    chunk_size: usize,
 ) -> Result<usize, AppError> {
     if output_directory.exists() {
         let mut entries = tokio::fs::read_dir(output_directory).await?;
@@ -88,7 +95,7 @@ async fn save_individual_files(
 
     let mut xml_reader = xml_reader::XmlReader::new(response);
     let saved_files = xml_reader
-        .process_file(original_paths, output_directory, auto)
+        .process_file(original_paths, output_directory, auto, chunk_size)
         .await?;
 
     let log_file_path = output_directory.join("raw_response.log");
@@ -133,7 +140,7 @@ async fn main() -> Result<(), AppError> {
             .bright_white()
     );
 
-    let output_file_text = combine_text_files(directory_files.clone()).await?;
+    let output_file_text = combine_text_files(directory_files.clone(), args.chunk_size).await?;
     println!(
         "   {} {}",
         "→".bright_white(),
@@ -190,8 +197,14 @@ async fn main() -> Result<(), AppError> {
     let press_output_dir = output_directory.join("press.output");
     tokio::fs::create_dir_all(&press_output_dir).await?;
 
-    let saved_files =
-        save_individual_files(&response, &press_output_dir, args.auto, &directory_files).await?;
+    let saved_files = save_individual_files(
+        &response,
+        &press_output_dir,
+        args.auto,
+        &directory_files,
+        args.chunk_size,
+    )
+    .await?;
 
     println!(
         "   {} {}",
@@ -274,25 +287,28 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
     Ok(text_files)
 }
 
-async fn combine_text_files(paths: Vec<PathBuf>) -> Result<String, std::io::Error> {
+async fn combine_text_files(
+    paths: Vec<PathBuf>,
+    chunk_size: usize,
+) -> Result<String, std::io::Error> {
     let mut combined = String::new();
     for path in paths {
-        let file_content = read_and_format_file(&path).await?;
+        let file_content = read_and_format_file(&path, chunk_size).await?;
         combined.push_str(&file_content);
     }
     Ok(combined)
 }
 
-async fn read_and_format_file(path: &Path) -> Result<String, std::io::Error> {
+async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, std::io::Error> {
     let contents = tokio::fs::read_to_string(path).await?;
     let lines: Vec<&str> = contents.lines().collect();
-    let num_parts = (lines.len() + CHUNK_SIZE - 1) / CHUNK_SIZE; // Ceiling division for number of parts
+    let num_parts = (lines.len() + chunk_size - 1) / chunk_size; // Ceiling division for number of parts
 
     let filename = escape_filename(path);
 
     let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", filename, num_parts);
 
-    for (part_id, chunk) in lines.chunks(CHUNK_SIZE).enumerate() {
+    for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
         let part_content = escape_cdata(chunk.join("\n"));
         file_content.push_str(&format!(
             "<part id=\"{}\"><![CDATA[{}]]></part>\n",
