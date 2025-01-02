@@ -108,6 +108,12 @@ struct Config {
     retries: u32,
 }
 
+#[derive(Serialize, Deserialize)]
+struct RollbackConfig {
+    new_files: Vec<String>,
+    rollback_files: Vec<(String, String)>,
+}
+
 fn get_config_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("config.toml");
@@ -159,26 +165,44 @@ async fn save_individual_files(
         tokio::fs::create_dir_all(output_directory).await?;
     }
 
+    // Create the .rollback directory
+    let rollback_dir = output_directory.join(".rollback");
+    tokio::fs::create_dir_all(&rollback_dir).await?;
+
     // Backup the original content of each file
-    let mut changes_log = String::new();
+    let mut rollback_config = RollbackConfig {
+        new_files: Vec::new(),
+        rollback_files: Vec::new(),
+    };
+
     for path in original_paths {
         let original_content = tokio::fs::read_to_string(&path).await?;
-        changes_log.push_str(&format!(
-            "{}|||{}\n",
-            path.display(),
-            original_content.replace("\n", "\\n") // Escape newlines for storage
+        let backup_path = rollback_dir.join(path.file_name().unwrap());
+        tokio::fs::write(&backup_path, &original_content).await?;
+        rollback_config.rollback_files.push((
+            path.display().to_string(),
+            backup_path.display().to_string(),
         ));
     }
-
-    // Write the backup to last_run_changes.log
-    let changes_log_path = output_directory.join("last_run_changes.log");
-    tokio::fs::write(changes_log_path, changes_log).await?;
 
     // Process the files with the AI response
     let mut xml_reader = xml_reader::XmlReader::new(response);
     let saved_files = xml_reader
         .process_file(original_paths, output_directory, auto, chunk_size)
         .await?;
+
+    // Track new files created during the run
+    for path in original_paths {
+        if !path.exists() {
+            rollback_config.new_files.push(path.display().to_string());
+        }
+    }
+
+    // Write the rollback config to rollback.toml
+    let rollback_config_path = rollback_dir.join("rollback.toml");
+    let rollback_config_str =
+        toml::to_string(&rollback_config).expect("Failed to serialize rollback config");
+    tokio::fs::write(rollback_config_path, rollback_config_str).await?;
 
     let log_file_path = output_directory.join("raw_response.log");
     tokio::fs::write(log_file_path, response.as_bytes()).await?;
@@ -187,26 +211,40 @@ async fn save_individual_files(
 }
 
 async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
-    let changes_log_path = output_directory.join("last_run_changes.log");
-    if !changes_log_path.exists() {
+    let rollback_dir = output_directory.join("press.output/.rollback");
+    if !rollback_dir.exists() {
         return Err(AppError::RollbackError(
             "No changes to rollback".to_string(),
         ));
     }
 
-    let changes_log = tokio::fs::read_to_string(&changes_log_path).await?;
-    for line in changes_log.lines() {
-        let parts: Vec<&str> = line.split("|||").collect();
-        if parts.len() == 2 {
-            let path = Path::new(parts[0]);
-            let original_content = parts[1].replace("\\n", "\n"); // Unescape newlines
-            tokio::fs::write(path, original_content).await?;
-            println!("Rolled back: {}", path.display());
+    // Read the rollback config
+    let rollback_config_path = rollback_dir.join("rollback.toml");
+    let rollback_config_str = tokio::fs::read_to_string(&rollback_config_path).await?;
+    let rollback_config: RollbackConfig =
+        toml::from_str(&rollback_config_str).expect("Failed to parse rollback config");
+
+    // Delete new files created during the run
+    for new_file in rollback_config.new_files {
+        let path = Path::new(&new_file);
+        if path.exists() {
+            tokio::fs::remove_file(path).await?;
+            println!("Deleted new file: {}", path.display());
         }
     }
 
-    // Remove the changes log file after rollback
-    tokio::fs::remove_file(changes_log_path).await?;
+    // Restore original files from the .rollback directory
+    for (original_path, backup_path) in rollback_config.rollback_files {
+        let original_path = Path::new(&original_path);
+        let backup_path = Path::new(&backup_path);
+        if backup_path.exists() {
+            tokio::fs::copy(backup_path, original_path).await?;
+            println!("Restored: {}", original_path.display());
+        }
+    }
+
+    // Remove the .rollback directory after rollback
+    tokio::fs::remove_dir_all(rollback_dir).await?;
 
     Ok(())
 }
