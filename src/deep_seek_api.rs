@@ -46,7 +46,8 @@ impl DeepSeekApi {
             .header("Authorization", format!("Bearer {}", &self.api_key))
             .json(&json!({
                 "model": "deepseek-chat",
-                "messages": messages
+                "messages": messages,
+                "temperature": 0
             }))
             .send()
             .await?;

@@ -75,6 +75,13 @@ struct Args {
 
     #[arg(long, help = "Pipe the last console output to the prompt")]
     pipe_output: bool,
+
+    #[arg(
+        long,
+        help = "Set the log level (debug, info, warn, error)",
+        default_value_t = ("info").to_string()
+    )]
+    log_level: String,
 }
 
 async fn save_individual_files(
@@ -109,9 +116,19 @@ async fn save_individual_files(
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    env_logger::init();
-    let start_time = Instant::now();
     let args = Args::parse();
+    
+    env_logger::Builder::from_default_env()
+        .filter_level(match args.log_level.as_str() {
+            "debug" => log::LevelFilter::Debug,
+            "info" => log::LevelFilter::Info,
+            "warn" => log::LevelFilter::Warn,
+            "error" => log::LevelFilter::Error,
+            _ => log::LevelFilter::Info,
+        })
+        .init();
+
+    let start_time = Instant::now();
 
     let api_key = match args.api_key {
         Some(key) => {
@@ -272,7 +289,7 @@ fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
 fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
-        "yaml", "yml", "toml", "xml",
+        "yaml", "yml", "toml", "xml", "tsx",
     ];
     let mut text_files = Vec::new();
 

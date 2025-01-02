@@ -104,10 +104,14 @@ impl<'a> XmlReader<'a> {
                             let original_content =
                                 tokio::fs::read_to_string(&original_file_path).await?;
                             let lines: Vec<&str> = original_content.lines().collect();
-                            let mut parts: Vec<String> = lines
-                                .chunks(chunk_size)
-                                .map(|chunk| chunk.join("\n"))
-                                .collect();
+                            let mut parts: Vec<String> = if chunk_size <= 0 {
+                                vec![original_content]
+                            } else {
+                                lines
+                                    .chunks(chunk_size as usize)
+                                    .map(|chunk| chunk.join("\n"))
+                                    .collect()
+                            };
 
                             for (part_id, content) in self.current_parts.drain(..) {
                                 if part_id > 0 && part_id <= parts.len() {
