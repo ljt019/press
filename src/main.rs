@@ -72,6 +72,9 @@ struct Args {
         default_value_t = 50
     )]
     chunk_size: usize,
+
+    #[arg(long, help = "Pipe the last console output to the prompt")]
+    pipe_output: bool,
 }
 
 async fn save_individual_files(
@@ -119,7 +122,7 @@ async fn main() -> Result<(), AppError> {
     };
 
     println!("\n{}", "╭──────────────────────╮".bright_magenta());
-    println!("{}", "│  🍇 Press v0.3.0     │".bright_magenta().bold());
+    println!("{}", "│  🍇 Press v0.4.0     │".bright_magenta().bold());
     println!("{}\n", "╰──────────────────────╯".bright_magenta());
 
     println!(
@@ -165,9 +168,15 @@ async fn main() -> Result<(), AppError> {
     let spinner = create_spinner();
 
     let mut retries = args.retries;
+    let mut prompt = args.prompt.clone();
+    if args.pipe_output {
+        let last_output = get_last_console_output();
+        prompt.push_str(&format!("\n\nPrevious output:\n{}", last_output));
+    }
+
     let response = loop {
         match deepseek_api
-            .call_deepseek(&args.system_prompt, &args.prompt, &output_file_text)
+            .call_deepseek(&args.system_prompt, &prompt, &output_file_text)
             .await
         {
             Ok(response) => break response,
@@ -236,6 +245,12 @@ async fn main() -> Result<(), AppError> {
     println!();
 
     Ok(())
+}
+
+fn get_last_console_output() -> String {
+    // This is a placeholder - you'll need to implement actual console output capture
+    // For now, it returns an empty string
+    String::new()
 }
 
 fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
@@ -311,7 +326,7 @@ async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, 
     for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
         let part_content = escape_cdata(chunk.join("\n"));
         file_content.push_str(&format!(
-            "<part id=\"{}\"><![CDATA[{}]]></part>\n",
+            "<part id=\"{}\"><![CDATA[{}]]]]><![CDATA[></part>\n",
             part_id + 1,
             part_content
         ));
@@ -329,7 +344,7 @@ fn escape_filename(path: &Path) -> String {
 }
 
 fn escape_cdata(content: String) -> String {
-    content.replace("]]>", "]]]]><![CDATA[>")
+    content.replace("]]]]><![CDATA[>", "]]]]]]><![CDATA[><![CDATA[>")
 }
 
 fn create_spinner() -> ProgressBar {
