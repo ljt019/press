@@ -89,6 +89,15 @@ struct Args {
 
     #[arg(long, help = "Set the temperature for the AI", default_value_t = 0.0)]
     temp: f32,
+
+    #[arg(
+        short,
+        long,
+        num_args = 1..,
+        value_delimiter = '&',
+        help = "Paths to files or directories to ignore"
+    )]
+    ignore: Vec<String>,
 }
 
 async fn save_individual_files(
@@ -168,7 +177,7 @@ async fn main() -> Result<(), AppError> {
     );
 
     let output_directory = Path::new(&args.output_directory);
-    let directory_files = get_files_to_press(&args.paths);
+    let directory_files = get_files_to_press(&args.paths, &args.ignore);
     let file_count = directory_files.len();
 
     println!(
@@ -283,14 +292,16 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
+fn get_files_to_press(paths: &[String], ignore_paths: &[String]) -> Vec<PathBuf> {
     let mut directory_files = Vec::new();
     for path in paths {
         let path = Path::new(path);
         if path.is_file() {
-            directory_files.push(path.to_path_buf());
+            if !is_ignored(path, ignore_paths) {
+                directory_files.push(path.to_path_buf());
+            }
         } else if path.is_dir() {
-            match get_directory_text_files(path) {
+            match get_directory_text_files(path, ignore_paths) {
                 Ok(files) => directory_files.extend(files),
                 Err(e) => log::error!("Error reading directory {}: {}", path.display(), e),
             }
@@ -299,7 +310,17 @@ fn get_files_to_press(paths: &[String]) -> Vec<PathBuf> {
     directory_files
 }
 
-fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
+    for ignore_path in ignore_paths {
+        let ignore_path = Path::new(ignore_path);
+        if path.starts_with(ignore_path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn get_directory_text_files(directory: &Path, ignore_paths: &[String]) -> Result<Vec<PathBuf>, std::io::Error> {
     let text_extensions = [
         "txt", "rs", "ts", "js", "go", "json", "py", "cpp", "c", "h", "hpp", "css", "html", "md",
         "yaml", "yml", "toml", "xml", "tsx",
@@ -310,10 +331,15 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
         dir: &Path,
         text_extensions: &[&str],
         text_files: &mut Vec<PathBuf>,
+        ignore_paths: &[String],
     ) -> Result<(), std::io::Error> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
+
+            if is_ignored(&path, ignore_paths) {
+                continue;
+            }
 
             if path.is_file() {
                 if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
@@ -322,13 +348,13 @@ fn get_directory_text_files(directory: &Path) -> Result<Vec<PathBuf>, std::io::E
                     }
                 }
             } else if path.is_dir() {
-                visit_dirs(&path, text_extensions, text_files)?;
+                visit_dirs(&path, text_extensions, text_files, ignore_paths)?;
             }
         }
         Ok(())
     }
 
-    visit_dirs(directory, &text_extensions, &mut text_files)?;
+    visit_dirs(directory, &text_extensions, &mut text_files, ignore_paths)?;
     Ok(text_files)
 }
 
