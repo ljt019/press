@@ -24,6 +24,7 @@ pub enum AppError {
     MissingPrompt,
     MissingApiKey,
     RollbackError(String),
+    InvalidInput(String),
 }
 
 impl fmt::Display for AppError {
@@ -36,6 +37,7 @@ impl fmt::Display for AppError {
             AppError::MissingPrompt => write!(f, "Prompt is required"),
             AppError::MissingApiKey => write!(f, "API key is required"),
             AppError::RollbackError(e) => write!(f, "Rollback error: {}", e),
+            AppError::InvalidInput(e) => write!(f, "Invalid input: {}", e),
         }
     }
 }
@@ -43,6 +45,12 @@ impl fmt::Display for AppError {
 impl From<std::io::Error> for AppError {
     fn from(err: std::io::Error) -> Self {
         AppError::IoError(err)
+    }
+}
+
+impl From<std::io::Error> for DeepSeekError {
+    fn from(err: std::io::Error) -> Self {
+        DeepSeekError::ApiError(err.to_string())
     }
 }
 

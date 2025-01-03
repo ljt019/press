@@ -76,6 +76,17 @@ impl DeepSeekApi {
 
         log::info!("DeepSeek response: {}", response);
 
+        let logs_dir = std::path::Path::new("./press.output/.logs");
+        tokio::fs::create_dir_all(logs_dir).await?;
+
+        // Save the response ./press.output/.logs/response.log
+        // Save the final_prompt ./press.output/.logs/prompt.log
+        let response_log = logs_dir.join("raw_response.log");
+        let prompt_log = logs_dir.join("prompt.log");
+
+        tokio::fs::write(response_log, &response).await?;
+        tokio::fs::write(prompt_log, final_prompt).await?;
+
         Ok(response)
     }
 }

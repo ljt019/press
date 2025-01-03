@@ -3,7 +3,7 @@
 mod cli_display;
 mod console_capture;
 mod deep_seek_api;
-mod errors;
+mod errors; // Make sure your AppError is defined/updated in errors.rs
 mod xml_reader;
 
 use clap::{Parser, Subcommand};
@@ -11,7 +11,7 @@ use cli_display::CliDisplayManager;
 use console_capture::get_last_console_output;
 use deep_seek_api::DeepSeekApi;
 use env_logger;
-use errors::AppError;
+use errors::AppError; // Pull in the updated AppError with new variants
 use log;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -114,13 +114,38 @@ struct RollbackConfig {
     rollback_files: Vec<(String, String)>,
 }
 
+/// Provide a default max file size (10 MB here) to prevent memory issues
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
 fn get_config_path() -> PathBuf {
     let mut path = get_executable_dir();
     path.push("config.toml");
     path
 }
 
-fn read_config() -> std::io::Result<Config> {
+/// Validate config to prevent obviously wrong or missing values.
+fn validate_config(config: &Config) -> Result<(), AppError> {
+    if config.chunk_size == 0 {
+        return Err(AppError::InvalidInput(
+            "Chunk size cannot be zero".to_string(),
+        ));
+    }
+    if config.temperature < 0.0 || config.temperature > 2.0 {
+        return Err(AppError::InvalidInput(
+            "Temperature must be between 0.0 and 2.0".to_string(),
+        ));
+    }
+    if !Path::new(&config.output_directory).is_dir() {
+        return Err(AppError::InvalidInput(format!(
+            "Output directory does not exist: {}",
+            config.output_directory
+        )));
+    }
+    Ok(())
+}
+
+/// Read config from file, and create a default config if none exists.
+fn read_config() -> Result<Config, AppError> {
     let config_path = get_config_path();
     if !config_path.exists() {
         // Create default config if it doesn't exist
@@ -136,7 +161,8 @@ fn read_config() -> std::io::Result<Config> {
         write_config(&default_config)?;
     }
     let config_str = fs::read_to_string(config_path)?;
-    let config: Config = toml::from_str(&config_str).expect("Failed to parse config");
+    let config: Config = toml::from_str(&config_str)?;
+    validate_config(&config)?;
     Ok(config)
 }
 
@@ -153,6 +179,7 @@ async fn save_individual_files(
     original_paths: &[PathBuf],
     chunk_size: usize,
 ) -> Result<usize, AppError> {
+    // Clear out or create the output directory
     if output_directory.exists() {
         let mut entries = tokio::fs::read_dir(output_directory).await?;
         while let Some(entry) = entries.next_entry().await? {
@@ -216,9 +243,6 @@ async fn save_individual_files(
         toml::to_string(&rollback_config).expect("Failed to serialize rollback config");
     tokio::fs::write(rollback_config_path, rollback_config_str).await?;
 
-    let log_file_path = output_directory.join("raw_response.log");
-    tokio::fs::write(log_file_path, response.as_bytes()).await?;
-
     Ok(saved_files)
 }
 
@@ -261,6 +285,7 @@ async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// The main entry point of the application
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let args = Args::parse();
@@ -347,7 +372,7 @@ async fn main() -> Result<(), AppError> {
     // Handle API key
     let api_key = config.api_key.ok_or(AppError::MissingApiKey)?;
 
-    // Capture console output before initializing the logger or printing anything
+    // Capture console output before initializing the logger
     let wrapped_previous_output = if let Some(num_to_capture) = args.pipe_output {
         let last_output = get_last_console_output(num_to_capture);
         format!(
@@ -358,7 +383,7 @@ async fn main() -> Result<(), AppError> {
         String::new()
     };
 
-    // Initialize logger after capturing console output to prevent logger output from being captured
+    // Initialize logger after capturing console output
     env_logger::Builder::from_default_env()
         .filter_level(match config.log_level.as_str() {
             "debug" => log::LevelFilter::Debug,
@@ -389,17 +414,17 @@ async fn main() -> Result<(), AppError> {
     display_manager.start_spinner();
 
     let mut retries = config.retries;
-    let mut prompt = prompt;
+    let mut combined_prompt = prompt;
     if args.pipe_output.is_some() {
         // Append the wrapped previous console output to the prompt
-        prompt.push_str(&wrapped_previous_output);
+        combined_prompt.push_str(&wrapped_previous_output);
     }
 
     let response = loop {
         match deepseek_api
             .call_deepseek(
                 &config.system_prompt,
-                &prompt,
+                &combined_prompt,
                 &output_file_text,
                 config.temperature,
             )
@@ -416,9 +441,7 @@ async fn main() -> Result<(), AppError> {
     };
 
     display_manager.stop_spinner();
-
     display_manager.print_api_response_success();
-
     display_manager.print_saving_results_start();
 
     let press_output_dir = output_directory.join("press.output");
@@ -434,7 +457,6 @@ async fn main() -> Result<(), AppError> {
     .await?;
 
     display_manager.print_saving_results_success(&press_output_dir.display().to_string());
-
     display_manager.print_footer(saved_files, start_time.elapsed());
 
     Ok(())
@@ -459,6 +481,7 @@ fn get_files_to_press(paths: &[String], ignore_paths: &[String]) -> Vec<PathBuf>
 }
 
 fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
+    // Check direct ignore paths
     for ignore_path in ignore_paths {
         let ignore_path = Path::new(ignore_path);
         if path.starts_with(ignore_path) {
@@ -466,10 +489,17 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
         }
     }
 
-    // Check for .gitignore and .pressignore files
-    if let Some(parent) = path.parent() {
+    // Check for .gitignore and .pressignore files in both the file's directory and working directory
+    let working_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let directories_to_check = if let Some(parent) = path.parent() {
+        vec![parent, &working_dir]
+    } else {
+        vec![working_dir.as_path()]
+    };
+
+    for dir in directories_to_check {
         for ignore_file in [".gitignore", ".pressignore"] {
-            let ignore_path = parent.join(ignore_file);
+            let ignore_path = dir.join(ignore_file);
             if ignore_path.exists() {
                 if let Ok(contents) = fs::read_to_string(&ignore_path) {
                     for line in contents.lines() {
@@ -477,7 +507,6 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
                         if line.is_empty() || line.starts_with('#') {
                             continue;
                         }
-
                         // Handle simple patterns
                         if path
                             .file_name()
@@ -486,7 +515,6 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
                         {
                             return true;
                         }
-
                         // Handle directory patterns
                         if line.ends_with('/') {
                             let dir_pattern = &line[..line.len() - 1];
@@ -562,16 +590,31 @@ async fn combine_text_files(
 }
 
 async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, std::io::Error> {
+    // File size check
+    let metadata = tokio::fs::metadata(path).await?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "File too large: {} (max {} bytes)",
+                path.display(),
+                MAX_FILE_SIZE
+            ),
+        ));
+    }
+
     let contents = tokio::fs::read_to_string(path).await?;
     let lines: Vec<&str> = contents.lines().collect();
-    let num_parts = (lines.len() + chunk_size - 1) / chunk_size; // Ceiling division for number of parts
+    let num_parts = (lines.len() + chunk_size - 1) / chunk_size; // Ceiling division
 
     let filename = escape_filename(path);
 
     let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", filename, num_parts);
 
     for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
+        // Escape any occurrences of "]]>" in the chunk
         let part_content = escape_cdata(chunk.join("\n"));
+        // Ensure we only have a single closing `]]>` before the `</part>`
         file_content.push_str(&format!(
             "<part id=\"{}\"><![CDATA[{}]]></part>\n",
             part_id + 1,
@@ -590,6 +633,7 @@ fn escape_filename(path: &Path) -> String {
         .replace("\"", "&quot;")
 }
 
+/// Replaces "]]>" inside file contents so it doesn't break the CDATA section
 fn escape_cdata(content: String) -> String {
     content.replace("]]>", "]]]]><![CDATA[>")
 }
