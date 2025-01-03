@@ -507,6 +507,19 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
                         if line.is_empty() || line.starts_with('#') {
                             continue;
                         }
+
+                        // Handle wildcard patterns
+                        if line.starts_with('*') {
+                            if let Some(ext) = line.strip_prefix("*.") {
+                                if let Some(file_ext) = path.extension().and_then(|e| e.to_str()) {
+                                    if file_ext == ext {
+                                        return true;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
                         // Handle simple patterns
                         if path
                             .file_name()
