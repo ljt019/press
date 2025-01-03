@@ -465,6 +465,41 @@ fn is_ignored(path: &Path, ignore_paths: &[String]) -> bool {
             return true;
         }
     }
+    
+    // Check for .gitignore files
+    if let Some(parent) = path.parent() {
+        let gitignore_path = parent.join(".gitignore");
+        if gitignore_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&gitignore_path) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    
+                    // Handle simple patterns
+                    if path.file_name()
+                        .and_then(|name| name.to_str())
+                        .map_or(false, |name| name == line)
+                    {
+                        return true;
+                    }
+                    
+                    // Handle directory patterns
+                    if line.ends_with('/') {
+                        let dir_pattern = &line[..line.len()-1];
+                        if path.is_dir() && path.file_name()
+                            .and_then(|name| name.to_str())
+                            .map_or(false, |name| name == dir_pattern)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     false
 }
 

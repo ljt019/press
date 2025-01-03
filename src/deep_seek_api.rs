@@ -121,4 +121,9 @@ All responses should include be in the following format:
 When modifying a file, only include the parts that need to be changed.
 When creating a new file send the entire file in one part (part 1) to make it easier.
 Please be sure to use the delete file tag sparingly. Only use it when the file is definitely no longer needed.
+
+DO NOT SEND ANY NON-CODE RESPONSES OUTSIDE OF <response> TAGS EVER UNDER ANY CIRCUMSTANCES.
+DO NOT SEND ANY TEXT OUTSIDE OF THE TAGS EVER UNDER ANY CIRCUMSTANCES.
+DO NOT SEND ANYTHING OUTSIDE OF THE TAGS EVER UNDER ANY CIRCUMSTANCES.
+TAGS ARE NECCESSARY TO PROCESS YOUR RESPONSES CORRECTLY.
 ";
