@@ -109,14 +109,10 @@ Important Restrictions:
 
 const BETA_IMPORTANT_TEXT: &str = "
 All responses should include be in the following format: 
-- Modify existing file:
-    - <file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
-- Create new file (if needed):
-    - <new_file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[content]]></part></new_file>
-- Delete file (if needed use sparingly):
-    - <delete_file path='path/to/file.ext'></delete_file>
-- Non-code response: (if needed)
-    - <response><![CDATA[message]]></response>
+<file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
+<new_file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[content]]></part></new_file>
+<delete_file path='path/to/file.ext'></delete_file>
+<response><![CDATA[message]]></response>
 
 When modifying a file, only include the parts that need to be changed.
 When creating a new file send the entire file in one part (part 1) to make it easier.
