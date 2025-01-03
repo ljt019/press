@@ -30,12 +30,12 @@ impl DeepSeekApi {
 
         let final_prompt = format!(
             "<code_files>{}</code_files> <user_prompt>{}</user_prompt> <important>{}</important>",
-            file_content, user_prompt, BETA_IMPORTANT_TEXT,
+            file_content, user_prompt, IMPORTANT_TEXT,
         );
 
         let final_system_prompt = format!(
             "<system_prompt>{}</system_prompt> <user_system_prompt>{}</user_system_prompt>",
-            BETA_SYSTEM_PROMPT, user_system_prompt
+            SYSTEM_PROMPT, user_system_prompt
         );
 
         let messages = vec![
@@ -81,13 +81,13 @@ impl DeepSeekApi {
 }
 
 const IMPORTANT_TEXT: &str = "Respond only with updated files using these formats: 
-1. Modify existing file: <file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
-2. Create new file: <new_file path=\"src/relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[content]]></part></new_file>
-3. Non-code response: <response_txt><![CDATA[message]]></response_txt>
-All paths must be relative to the 'src' directory. Only include the parts that need to be changed for each file, not all parts.";
+1. Modify existing file: <file path=\"relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
+2. Create new file: <new_file path=\"relative/path/filename.ext\" parts=\"total_parts\"><part id=\"part_number\"><![CDATA[content]]></part></new_file>
+3. Non-code response: <response><![CDATA[message]]></response>
+Only include the parts that need to be changed for each file, not all parts.";
 
 const SYSTEM_PROMPT: &str =  "You are an AI assistant specialized in analyzing, refactoring, and improving source code. Your responses will primarily be used to automatically overwrite existing code files. Therefore, it is crucial that you adhere to the following guidelines.
-If a non-code response is needed, surround it in <response_txt> tags so it gets saved in the relevant place.
+If a non-code response is needed, surround it in <response> tags so it gets saved in the relevant place.
 1. **Formatting Restrictions**:
    - Do not include any code block delimiters such as ``` or markdown formatting.
    - Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
@@ -111,15 +111,11 @@ const BETA_IMPORTANT_TEXT: &str = "
 All responses should include be in the following format: 
 <file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
 <new_file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[content]]></part></new_file>
-<delete_file path='path/to/file.ext'></delete_file>
 <response><![CDATA[message]]></response>
 
-When modifying a file, only include the parts that need to be changed.
-When creating a new file send the entire file in one part (part 1) to make it easier.
-Please be sure to use the delete file tag sparingly. Only use it when the file is definitely no longer needed.
+When modifying a file, only include the parts that need to be changed, but still include the total_parts attribute to indicate the number of parts in the full file.
+When creating a new file send the entire file in one part (part 1) to make it easier to process.
 
-DO NOT SEND ANY NON-CODE RESPONSES OUTSIDE OF <response> TAGS EVER UNDER ANY CIRCUMSTANCES.
-DO NOT SEND ANY TEXT OUTSIDE OF THE TAGS EVER UNDER ANY CIRCUMSTANCES.
-DO NOT SEND ANYTHING OUTSIDE OF THE TAGS EVER UNDER ANY CIRCUMSTANCES.
 TAGS ARE NECCESSARY TO PROCESS YOUR RESPONSES CORRECTLY.
+ANY MESSAGES NOT ADDED IN THE ABOVE FORMAT WILL BE IGNORED.
 ";

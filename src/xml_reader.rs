@@ -80,7 +80,7 @@ impl<'a> XmlReader<'a> {
                 Ok(Event::Start(ref e)) => match e.name().as_ref() {
                     b"file" | b"new_file" => self.handle_file_start(e)?,
                     b"part" => self.handle_part_start(e)?,
-                    b"response_txt" => self.current_parts.clear(),
+                    b"response" => self.current_parts.clear(),
                     _ => (),
                 },
                 Ok(Event::CData(e)) => {
@@ -150,7 +150,7 @@ impl<'a> XmlReader<'a> {
                             saved_files += 1;
                         }
                     }
-                    b"response_txt" => {
+                    b"response" => {
                         self.response_txt_content = self
                             .current_parts
                             .drain(..)
