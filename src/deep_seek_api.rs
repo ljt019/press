@@ -30,12 +30,12 @@ impl DeepSeekApi {
 
         let final_prompt = format!(
             "<code_files>{}</code_files> <user_prompt>{}</user_prompt> <important>{}</important>",
-            file_content, user_prompt, IMPORTANT_TEXT,
+            file_content, user_prompt, BETA_IMPORTANT_TEXT,
         );
 
         let final_system_prompt = format!(
             "<system_prompt>{}</system_prompt> <user_system_prompt>{}</user_system_prompt>",
-            SYSTEM_PROMPT, user_system_prompt
+            BETA_SYSTEM_PROMPT, user_system_prompt
         );
 
         let messages = vec![
@@ -94,3 +94,31 @@ If a non-code response is needed, surround it in <response_txt> tags so it gets 
 2. **Code Integrity**:
    - Ensure that the syntax and structure of the code remain correct and functional.
    - Only make necessary improvements or refactorings based on the user's prompt.";
+
+const BETA_SYSTEM_PROMPT: &str = "
+Act as an expert software developer. Take requests for changes to the supplied code.
+It is crucial you generate the highest quality code possible. 
+Ensure that the code is well-formatted, efficient, and adheres to best practices.
+
+Important Restrictions: 
+- Do not include any code block delimiters such as ``` or markdown formatting.
+- Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
+- Ensure that the syntax and structure of the code remain correct and functional.
+- Only make necessary improvements or refactorings based on the user's prompt.
+";
+
+const BETA_IMPORTANT_TEXT: &str = "
+All responses should include be in the following format: 
+- Modify existing file:
+    - <file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[updated_content]]></part></file>
+- Create new file (if needed):
+    - <new_file path='path/to/file.ext' parts='total_parts'><part id=\"part_number\"><![CDATA[content]]></part></new_file>
+- Delete file (if needed use sparingly):
+    - <delete_file path='path/to/file.ext'></delete_file>
+- Non-code response: (if needed)
+    - <response><![CDATA[message]]></response>
+
+When modifying a file, only include the parts that need to be changed.
+When creating a new file send the entire file in one part (part 1) to make it easier.
+Please be sure to use the delete file tag sparingly. Only use it when the file is definitely no longer needed.
+";

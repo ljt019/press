@@ -15,7 +15,7 @@ impl CliDisplayManager {
 
     pub fn print_header(&self) {
         println!("\n{}", "╭──────────────────────╮".bright_magenta());
-        println!("{}", "│  🍇 Press v0.5.0     │".bright_magenta().bold());
+        println!("{}", "│  🍇 Press v0.6.0     │".bright_magenta().bold());
         println!("{}\n", "╰──────────────────────╯".bright_magenta());
     }
 
