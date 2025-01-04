@@ -30,12 +30,12 @@ impl DeepSeekApi {
 
         let final_prompt = format!(
             "<code_files>{}</code_files> <user_prompt>{}</user_prompt> <important>{}</important>",
-            file_content, user_prompt, IMPORTANT_TEXT,
+            file_content, user_prompt, BETA_IMPORTANT_TEXT,
         );
 
         let final_system_prompt = format!(
             "<system_prompt>{}</system_prompt> <user_system_prompt>{}</user_system_prompt>",
-            SYSTEM_PROMPT, user_system_prompt
+            BETA_SYSTEM_PROMPT, user_system_prompt
         );
 
         let messages = vec![
@@ -116,6 +116,8 @@ Important Restrictions:
 - Avoid adding or removing comments, explanations, or any non-code text in your responses unless the code is particularly confusing.
 - Ensure that the syntax and structure of the code remain correct and functional.
 - Only make necessary improvements or refactorings based on the user's prompt.
+- ONLY RESPOND WITH FULL FILES OR PARTS OF FILES THAT NEED TO BE CHANGED. DO NOT LEAVE PLACEHOLDER COMMENTS FOR CODE TO BE ADDED LATER.
+- YOUR RESPONSES WILL BE DIRECTLY APPLIED TO THE CODEBASE, SO ENSURE THAT THEY ARE COMPLETE AND FUNCTIONAL.
 ";
 
 const BETA_IMPORTANT_TEXT: &str = "
@@ -129,4 +131,5 @@ When creating a new file send the entire file in one part (part 1) to make it ea
 
 TAGS ARE NECCESSARY TO PROCESS YOUR RESPONSES CORRECTLY.
 ANY MESSAGES NOT ADDED IN THE ABOVE FORMAT WILL BE IGNORED.
+YOUR RESPONSES WILL BE DIRECTLY APPLIED TO THE CODEBASE, SO ENSURE THAT THEY ARE COMPLETE AND FUNCTIONAL.
 ";
