@@ -620,9 +620,9 @@ async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, 
     let lines: Vec<&str> = contents.lines().collect();
     let num_parts = (lines.len() + chunk_size - 1) / chunk_size; // Ceiling division
 
-    let filename = escape_filename(path);
+    let path = path.to_str().unwrap();
 
-    let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", filename, num_parts);
+    let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", path, num_parts);
 
     for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
         // Escape any occurrences of "]]>" in the chunk
@@ -637,13 +637,6 @@ async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, 
 
     file_content.push_str("</file>\n");
     Ok(file_content)
-}
-
-fn escape_filename(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .replace("\"", "&quot;")
 }
 
 /// Replaces "]]>" inside file contents so it doesn't break the CDATA section
