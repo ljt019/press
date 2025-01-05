@@ -82,7 +82,6 @@ impl<'a> XmlParser<'a> {
         }
     }
 
-    /// Filters the preprocessed prompt to include only the relevant files and parts.
     pub fn filter_preprocessed_prompt(
         &mut self,
         preprocessed_prompt: &str,
@@ -95,17 +94,23 @@ impl<'a> XmlParser<'a> {
         let mut buf = Vec::new();
         let mut current_file_path = None;
         let mut current_file_parts = Vec::new();
+        let mut in_requested_part = false;
 
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
                     if e.name().as_ref() == b"file" {
+                        // Reset state for a new file
+                        current_file_path = None;
+                        current_file_parts.clear();
+
+                        // Check if this file has parts to edit
                         for attr in e.attributes().with_checks(false) {
                             if let Ok(attr) = attr {
                                 if attr.key.as_ref() == b"path" {
                                     let path = attr.unescape_value()?.into_owned();
                                     if let Some(parts) = parts_to_edit.get(&path) {
-                                        current_file_path = Some(path.clone());
+                                        current_file_path = Some(path);
                                         current_file_parts = parts.clone();
                                         writer.write_event(Event::Start(e.clone()))?;
                                     }
@@ -113,15 +118,19 @@ impl<'a> XmlParser<'a> {
                             }
                         }
                     } else if e.name().as_ref() == b"part" {
-                        for attr in e.attributes().with_checks(false) {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"id" {
-                                    let id = attr
-                                        .unescape_value()?
-                                        .parse::<usize>()
-                                        .expect("Invalid part ID");
-                                    if current_file_parts.contains(&id) {
-                                        writer.write_event(Event::Start(e.clone()))?;
+                        // Check if this part should be included
+                        if let Some(_) = &current_file_path {
+                            for attr in e.attributes().with_checks(false) {
+                                if let Ok(attr) = attr {
+                                    if attr.key.as_ref() == b"id" {
+                                        let id = attr
+                                            .unescape_value()?
+                                            .parse::<usize>()
+                                            .expect("Invalid part ID");
+                                        if current_file_parts.contains(&id) {
+                                            writer.write_event(Event::Start(e.clone()))?;
+                                            in_requested_part = true;
+                                        }
                                     }
                                 }
                             }
@@ -136,18 +145,19 @@ impl<'a> XmlParser<'a> {
                             current_file_parts.clear();
                         }
                     } else if e.name().as_ref() == b"part" {
-                        if current_file_path.is_some() {
+                        if in_requested_part {
                             writer.write_event(Event::End(e))?;
+                            in_requested_part = false;
                         }
                     }
                 }
                 Ok(Event::Text(e)) => {
-                    if current_file_path.is_some() {
+                    if in_requested_part {
                         writer.write_event(Event::Text(e))?;
                     }
                 }
                 Ok(Event::CData(e)) => {
-                    if current_file_path.is_some() {
+                    if in_requested_part {
                         writer.write_event(Event::CData(e))?;
                     }
                 }

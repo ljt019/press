@@ -9,7 +9,6 @@ use api::client::DeepSeekApi;
 use clap::Parser;
 use cli::args::Args;
 use cli::args::Commands;
-use env_logger;
 use errors::AppError;
 use file_processing::{reader, writer, xml_parser};
 use log;
