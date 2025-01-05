@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 /// CLI arguments for the Press application.
-#[derive(Parser, Debug, PartialEq)]
+#[derive(Parser, Debug, PartialEq, Clone)]
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Paths to directories or files to process.
@@ -30,7 +30,7 @@ pub struct Args {
 }
 
 /// Subcommands for the Press application.
-#[derive(Subcommand, Debug, PartialEq)]
+#[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
     /// Manage configuration options.
     Config {

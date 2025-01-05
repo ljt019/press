@@ -31,7 +31,12 @@ async fn main() -> Result<(), AppError> {
     let mut display_manager = cli::display::CliDisplayManager::new();
 
     // Handle subcommands
-    handle_subcommands(args.command).await?;
+    handle_subcommands(args.command.clone()).await?;
+
+    match &args.command {
+        Some(_) => return Ok(()),
+        None => {}
+    }
 
     // Ensure prompt is provided
     let prompt = args.prompt.ok_or(AppError::MissingPrompt)?;
