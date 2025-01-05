@@ -534,7 +534,7 @@ async fn main() -> Result<(), AppError> {
     let parts_to_edit = parse_parts_to_edit(&preprocessed_prompt)?;
 
     // Filter the preprocessed_prompt to include only the relevant files and parts
-    let filtered_prompt = filter_preprocessed_prompt(&preprocessed_prompt, &parts_to_edit)?;
+    let filtered_prompt = filter_preprocessed_prompt(&output_file_text, &parts_to_edit)?;
 
     // Log the filtered prompt for debugging
     log::debug!("Filtered Preprocessed Prompt:\n{}", filtered_prompt);
