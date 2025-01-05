@@ -81,8 +81,8 @@ impl DeepSeekApi {
 
         // Save the response ./press.output/.logs/response.log
         // Save the final_prompt ./press.output/.logs/prompt.log
-        let response_log = logs_dir.join("raw_response.log");
-        let prompt_log = logs_dir.join("prompt.log");
+        let response_log = logs_dir.join("raw_preprocessor_response.log");
+        let prompt_log = logs_dir.join("preprocessor_prompt.log");
 
         tokio::fs::write(response_log, &response).await?;
         tokio::fs::write(prompt_log, final_prompt).await?;
