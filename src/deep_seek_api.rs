@@ -101,12 +101,12 @@ impl DeepSeekApi {
 
         let final_prompt = format!(
             "<code_files>{}</code_files> <user_prompt>{}</user_prompt> <important>{}</important>",
-            file_content, user_prompt, PREPROCESSOR_IMPORTANT_TEXT,
+            file_content, user_prompt, CODE_EDITOR_IMPORTANT_TEXT,
         );
 
         let final_system_prompt = format!(
             "<system_prompt>{}</system_prompt> <user_system_prompt>{}</user_system_prompt>",
-            PREPROCESSOR_SYSTEM_PROMPT, user_system_prompt
+            CODE_EDITOR_SYSTEM_PROMPT, user_system_prompt
         );
 
         let messages = vec![
