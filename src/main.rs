@@ -87,7 +87,8 @@ async fn main() -> Result<(), AppError> {
                 &config.system_prompt,
                 &combined_prompt,
                 &output_file_text,
-                config.temperature,
+                config.temperature.clone(),
+                config.output_directory.clone(),
             )
             .await
         {
@@ -121,7 +122,8 @@ async fn main() -> Result<(), AppError> {
                 &config.system_prompt,
                 &combined_prompt,
                 &filtered_prompt,
-                config.temperature,
+                config.temperature.clone(),
+                config.output_directory.clone(),
             )
             .await
         {
