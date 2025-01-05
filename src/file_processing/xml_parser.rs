@@ -193,22 +193,21 @@ impl<'a> XmlParser<'a> {
                     if e.name().as_ref() == b"file" {
                         for attr in e.attributes().with_checks(false) {
                             if let Ok(attr) = attr {
-                                match attr.key.as_ref() {
-                                    b"path" => {
-                                        current_path = Some(attr.unescape_value()?.into_owned());
-                                    }
-                                    b"parts" => {
-                                        let parts_str = attr.unescape_value()?;
-                                        current_parts = parts_str
-                                            .split(',')
-                                            .filter_map(|s| s.parse::<usize>().ok())
-                                            .collect();
-                                    }
-                                    _ => {}
+                                if attr.key.as_ref() == b"path" {
+                                    current_path = Some(attr.unescape_value()?.into_owned());
                                 }
                             }
                         }
                     }
+                }
+                Ok(Event::Text(e)) => {
+                    // Split text content by commas and parse each part
+                    let unescaped_text = e.unescape()?.trim().to_string();
+                    current_parts.extend(
+                        unescaped_text
+                            .split(',')
+                            .filter_map(|s| s.trim().parse::<usize>().ok()),
+                    );
                 }
                 Ok(Event::End(e)) => {
                     if e.name().as_ref() == b"file" {
