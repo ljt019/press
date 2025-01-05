@@ -124,6 +124,7 @@ impl DeepSeekApi {
                 "model": "deepseek-chat",
                 "messages": messages,
                 "temperature": temperature,
+                "max_tokens": 8192,
             }))
             .send()
             .await?;
