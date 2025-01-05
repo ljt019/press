@@ -146,7 +146,7 @@ impl DeepSeekApi {
                 // Save the response to {output_directory}/.logs/preprocessor_raw_response.txt
                 let response_path = logs_dir.join("preprocessor_raw_response.txt");
                 let mut response_file = std::fs::File::create(response_path)?;
-                writeln!(response_file, "{}", raw_response)?;
+                writeln!(response_file, "{}", response)?;
             }
             "code_editor" => {
                 // Save the prompt to {output_directory}/.logs/code_assistant_prompt.txt
@@ -161,7 +161,7 @@ impl DeepSeekApi {
                 // Save the response to {output_directory}/.logs/code_assistant_raw_response.txt
                 let response_path = logs_dir.join("code_assistant_raw_response.txt");
                 let mut response_file = std::fs::File::create(response_path)?;
-                writeln!(response_file, "{}", raw_response)?;
+                writeln!(response_file, "{}", response)?;
             }
             _ => {
                 return Err(DeepSeekError::ApiError("Invalid endpoint".to_string()));
