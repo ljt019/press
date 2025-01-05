@@ -105,6 +105,10 @@ async fn main() -> Result<(), AppError> {
     // Use XmlReader to parse and filter the preprocessed prompt
     let mut preprocessor_xml_parser = xml_parser::XmlParser::new(&preprocessed_prompt);
     let parts_to_edit = preprocessor_xml_parser.parse_parts_to_edit(&preprocessed_prompt)?;
+
+    log::debug!("Parts to Edit: {:?}", parts_to_edit);
+    log::debug!("Output File Text: {}", output_file_text);
+
     let filtered_prompt =
         preprocessor_xml_parser.filter_preprocessed_prompt(&output_file_text, &parts_to_edit)?;
 
