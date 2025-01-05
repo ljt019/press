@@ -334,8 +334,6 @@ fn filter_preprocessed_prompt(
                             }
                         }
                     }
-                } else {
-                    writer.write_event(Event::Start(e))?;
                 }
             }
             Ok(Event::End(e)) => {
@@ -349,8 +347,6 @@ fn filter_preprocessed_prompt(
                     if current_file_path.is_some() {
                         writer.write_event(Event::End(e))?;
                     }
-                } else {
-                    writer.write_event(Event::End(e))?;
                 }
             }
             Ok(Event::Text(e)) => {
