@@ -1,11 +1,12 @@
-use crate::AppError;
+use crate::errors::AppError;
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, Writer};
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tokio;
 
-pub struct XmlReader<'a> {
+pub struct XmlParser<'a> {
     reader: Reader<&'a [u8]>,
     #[allow(dead_code)]
     buf: Vec<u8>,
@@ -15,13 +16,12 @@ pub struct XmlReader<'a> {
     in_response_tag: bool,
 }
 
-impl<'a> XmlReader<'a> {
+impl<'a> XmlParser<'a> {
     pub fn new(response: &'a str) -> Self {
         let mut reader = Reader::from_str(response);
-        // Trim whitespace in text nodes
         reader.config_mut().trim_text(true);
 
-        XmlReader {
+        XmlParser {
             reader,
             buf: Vec::new(),
             current_path: None,
@@ -41,7 +41,6 @@ impl<'a> XmlReader<'a> {
                     let value = attr.unescape_value()?;
                     self.current_path = Some(value.into_owned());
                 } else if attr.key.as_ref() == b"parts" {
-                    // Handle the "parts" attribute in <file> tags within <parts_to_edit>
                     let value = attr.unescape_value()?;
                     let part_ids: Vec<u32> = value
                         .split(',')
@@ -62,10 +61,8 @@ impl<'a> XmlReader<'a> {
         e: &quick_xml::events::BytesStart,
     ) -> Result<(), quick_xml::Error> {
         if self.in_response_tag {
-            // If we are inside <response>, just start a fresh part
             self.current_parts.push((0, String::new()));
         } else {
-            // Otherwise, look for an id attribute
             for attr in e.attributes().with_checks(false) {
                 if let Ok(attr) = attr {
                     if attr.key.as_ref() == b"id" {
@@ -80,13 +77,150 @@ impl<'a> XmlReader<'a> {
     }
 
     pub fn handle_text(&mut self, text: String) {
-        // Accumulate text within the last part
         if let Some(last_part) = self.current_parts.last_mut() {
             last_part.1.push_str(&text);
         }
     }
 
-    /// Parse the XML in the AI response and apply changes to each file
+    /// Filters the preprocessed prompt to include only the relevant files and parts.
+    pub fn filter_preprocessed_prompt(
+        &mut self,
+        preprocessed_prompt: &str,
+        parts_to_edit: &HashMap<String, Vec<usize>>,
+    ) -> Result<String, AppError> {
+        let mut reader = Reader::from_str(preprocessed_prompt);
+        reader.config_mut().trim_text(true);
+
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        let mut buf = Vec::new();
+        let mut current_file_path = None;
+        let mut current_file_parts = Vec::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    if e.name().as_ref() == b"file" {
+                        for attr in e.attributes().with_checks(false) {
+                            if let Ok(attr) = attr {
+                                if attr.key.as_ref() == b"path" {
+                                    let path = attr.unescape_value()?.into_owned();
+                                    if let Some(parts) = parts_to_edit.get(&path) {
+                                        current_file_path = Some(path.clone());
+                                        current_file_parts = parts.clone();
+                                        writer.write_event(Event::Start(e.clone()))?;
+                                    }
+                                }
+                            }
+                        }
+                    } else if e.name().as_ref() == b"part" {
+                        for attr in e.attributes().with_checks(false) {
+                            if let Ok(attr) = attr {
+                                if attr.key.as_ref() == b"id" {
+                                    let id = attr
+                                        .unescape_value()?
+                                        .parse::<usize>()
+                                        .expect("Invalid part ID");
+                                    if current_file_parts.contains(&id) {
+                                        writer.write_event(Event::Start(e.clone()))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Event::End(e)) => {
+                    if e.name().as_ref() == b"file" {
+                        if current_file_path.is_some() {
+                            writer.write_event(Event::End(e))?;
+                            current_file_path = None;
+                            current_file_parts.clear();
+                        }
+                    } else if e.name().as_ref() == b"part" {
+                        if current_file_path.is_some() {
+                            writer.write_event(Event::End(e))?;
+                        }
+                    }
+                }
+                Ok(Event::Text(e)) => {
+                    if current_file_path.is_some() {
+                        writer.write_event(Event::Text(e))?;
+                    }
+                }
+                Ok(Event::CData(e)) => {
+                    if current_file_path.is_some() {
+                        writer.write_event(Event::CData(e))?;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(AppError::XmlError(e)),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        let result = writer.into_inner().into_inner();
+        let filtered_prompt = String::from_utf8(result).expect("Invalid UTF-8 in filtered prompt");
+        Ok(filtered_prompt)
+    }
+
+    /// Parses the `<parts_to_edit>` section of the preprocessed prompt and returns a HashMap
+    /// mapping file paths to their associated part IDs.
+    pub fn parse_parts_to_edit(
+        &mut self,
+        preprocessed_prompt: &str,
+    ) -> Result<HashMap<String, Vec<usize>>, AppError> {
+        let mut reader = Reader::from_str(preprocessed_prompt);
+        reader.config_mut().trim_text(true);
+
+        let mut parts_to_edit = HashMap::new();
+        let mut buf = Vec::new();
+        let mut current_path = None;
+        let mut current_parts = Vec::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    if e.name().as_ref() == b"file" {
+                        for attr in e.attributes().with_checks(false) {
+                            if let Ok(attr) = attr {
+                                match attr.key.as_ref() {
+                                    b"path" => {
+                                        current_path = Some(attr.unescape_value()?.into_owned());
+                                    }
+                                    b"parts" => {
+                                        let parts_str = attr.unescape_value()?;
+                                        current_parts = parts_str
+                                            .split(',')
+                                            .filter_map(|s| s.parse::<usize>().ok())
+                                            .collect();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Event::End(e)) => {
+                    if e.name().as_ref() == b"file" {
+                        if let Some(path) = current_path.take() {
+                            parts_to_edit.insert(path, current_parts.clone());
+                        }
+                        current_parts.clear();
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => {
+                    return Err(AppError::XmlError(e));
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        Ok(parts_to_edit)
+    }
+
+    /// Process the XML in the AI response and apply changes to each file
     pub async fn process_file(
         &mut self,
         original_paths: &[PathBuf],
@@ -106,16 +240,13 @@ impl<'a> XmlReader<'a> {
                     b"response" => {
                         self.in_response_tag = true;
                         self.current_parts.clear();
-                        // We always keep one "part" open for <response> content
                         self.current_parts.push((0, String::new()));
                     }
                     b"parts_to_edit" => {
-                        // Start of <parts_to_edit> - reset state
                         self.current_path = None;
                         self.current_parts.clear();
                     }
                     b"preprocessor_prompt" => {
-                        // Start of <preprocessor_prompt> - reset state
                         self.current_path = None;
                         self.current_parts.clear();
                     }
@@ -132,7 +263,6 @@ impl<'a> XmlReader<'a> {
                 }
                 Ok(Event::End(ref e)) => match e.name().as_ref() {
                     b"file" => {
-                        // Save or overwrite the file as needed
                         if let Some(path) = self.current_path.take() {
                             let fallback = PathBuf::from(&path);
                             let original_file_path = original_paths
@@ -140,11 +270,9 @@ impl<'a> XmlReader<'a> {
                                 .find(|p| p.to_string_lossy().ends_with(&path))
                                 .unwrap_or(&fallback);
 
-                            // Read original file content
                             let original_content =
                                 tokio::fs::read_to_string(&original_file_path).await?;
 
-                            // Split original into parts
                             let lines: Vec<&str> = original_content.lines().collect();
                             let mut parts: Vec<String> = if chunk_size == 0 {
                                 vec![original_content]
@@ -155,7 +283,6 @@ impl<'a> XmlReader<'a> {
                                     .collect()
                             };
 
-                            // Overwrite only the parts we have in the response
                             for (part_id, content) in self.current_parts.drain(..) {
                                 if part_id > 0 && part_id <= parts.len() {
                                     parts[part_id - 1] = content;
@@ -164,7 +291,6 @@ impl<'a> XmlReader<'a> {
 
                             let new_content = parts.join("\n");
 
-                            // Decide final path
                             let output_file_path = if auto {
                                 original_file_path.to_path_buf()
                             } else {
@@ -180,7 +306,6 @@ impl<'a> XmlReader<'a> {
                         }
                     }
                     b"new_file" => {
-                        // This section handles brand-new files that didn't exist
                         if let Some(path) = self.current_path.take() {
                             let file_path = PathBuf::from(&path);
                             if let Some(parent) = file_path.parent() {
@@ -197,7 +322,6 @@ impl<'a> XmlReader<'a> {
                         }
                     }
                     b"parts_to_edit" => {
-                        // End of <parts_to_edit> - store the extracted file paths and part IDs
                         if let Some(path) = self.current_path.take() {
                             let part_ids = self
                                 .current_parts
@@ -208,7 +332,6 @@ impl<'a> XmlReader<'a> {
                         }
                     }
                     b"preprocessor_prompt" => {
-                        // End of <preprocessor_prompt> - store the extracted prompt
                         let prompt = self
                             .current_parts
                             .drain(..)
@@ -218,7 +341,6 @@ impl<'a> XmlReader<'a> {
                         println!("Preprocessor Prompt: {}", prompt);
                     }
                     b"response" => {
-                        // End of <response> - store in "response.txt"
                         self.in_response_tag = false;
                         self.response_txt_content = self
                             .current_parts
@@ -239,10 +361,7 @@ impl<'a> XmlReader<'a> {
                     }
                     _ => (),
                 },
-                Ok(Event::Eof) => {
-                    // Reached end of the AI response
-                    break;
-                }
+                Ok(Event::Eof) => break,
                 Err(e) => {
                     log::error!("Error parsing XML: {:?}", e);
                     break;
