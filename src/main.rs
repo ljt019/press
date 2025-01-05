@@ -543,8 +543,8 @@ async fn main() -> Result<(), AppError> {
         match deepseek_api
             .call_deepseek_code_assistant(
                 &config.system_prompt,
+                &combined_prompt,
                 &filtered_prompt,
-                &output_file_text,
                 config.temperature,
             )
             .await
