@@ -127,7 +127,7 @@ impl DeepSeekApi {
         log::info!("DeepSeek response: {}", response);
 
         // Create the .logs directory if it doesn't exist
-        let logs_dir = std::path::Path::new(&output_directory).join(".logs");
+        let logs_dir = std::path::Path::new(&output_directory).join("press.output/.logs");
         if !logs_dir.exists() {
             std::fs::create_dir_all(&logs_dir)?;
         }
