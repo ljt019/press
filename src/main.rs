@@ -13,9 +13,13 @@ use deep_seek_api::DeepSeekApi;
 use env_logger;
 use errors::AppError; // Pull in the updated AppError with new variants
 use log;
+use quick_xml::events::Event;
+use quick_xml::{Reader, Writer};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     env, fs,
+    io::Cursor,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -285,6 +289,92 @@ async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Filters the preprocessed prompt to include only the relevant files and parts.
+fn filter_preprocessed_prompt(
+    preprocessed_prompt: &str,
+    parts_to_edit: &HashMap<String, Vec<usize>>,
+) -> Result<String, AppError> {
+    let mut reader = Reader::from_str(preprocessed_prompt);
+    reader.config_mut().trim_text(true);
+
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let mut current_file_path = None;
+    let mut current_file_parts = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"file" {
+                    // Extract the "path" attribute from the <file> tag
+                    for attr in e.attributes().with_checks(false) {
+                        if let Ok(attr) = attr {
+                            if attr.key.as_ref() == b"path" {
+                                let path = attr.unescape_value()?.into_owned();
+                                if let Some(parts) = parts_to_edit.get(&path) {
+                                    current_file_path = Some(path.clone());
+                                    current_file_parts = parts.clone();
+                                    writer.write_event(Event::Start(e.clone()))?;
+                                }
+                            }
+                        }
+                    }
+                } else if e.name().as_ref() == b"part" {
+                    // Extract the "id" attribute from the <part> tag
+                    for attr in e.attributes().with_checks(false) {
+                        if let Ok(attr) = attr {
+                            if attr.key.as_ref() == b"id" {
+                                let id = attr
+                                    .unescape_value()?
+                                    .parse::<usize>()
+                                    .expect("Invalid part ID");
+                                if current_file_parts.contains(&id) {
+                                    writer.write_event(Event::Start(e.clone()))?;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    writer.write_event(Event::Start(e))?;
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"file" {
+                    if current_file_path.is_some() {
+                        writer.write_event(Event::End(e))?;
+                        current_file_path = None;
+                        current_file_parts.clear();
+                    }
+                } else if e.name().as_ref() == b"part" {
+                    if current_file_path.is_some() {
+                        writer.write_event(Event::End(e))?;
+                    }
+                } else {
+                    writer.write_event(Event::End(e))?;
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if current_file_path.is_some() {
+                    writer.write_event(Event::Text(e))?;
+                }
+            }
+            Ok(Event::CData(e)) => {
+                if current_file_path.is_some() {
+                    writer.write_event(Event::CData(e))?;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(AppError::XmlError(e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let result = writer.into_inner().into_inner();
+    let filtered_prompt = String::from_utf8(result).expect("Invalid UTF-8 in filtered prompt");
+    Ok(filtered_prompt)
+}
+
 /// The main entry point of the application
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -420,11 +510,40 @@ async fn main() -> Result<(), AppError> {
         combined_prompt.push_str(&wrapped_previous_output);
     }
 
-    let response = loop {
+    let preprocessed_prompt = loop {
         match deepseek_api
-            .call_deepseek(
+            .call_deepseek_preprocessor(
                 &config.system_prompt,
                 &combined_prompt,
+                &output_file_text,
+                config.temperature,
+            )
+            .await
+        {
+            Ok(response) => break response,
+            Err(e) if retries > 0 => {
+                retries -= 1;
+                log::warn!("API call failed, retries left: {} ({})", retries, e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
+
+    // Parse the preprocessed_prompt to extract file paths and part IDs
+    let parts_to_edit = parse_parts_to_edit(&preprocessed_prompt)?;
+
+    // Filter the preprocessed_prompt to include only the relevant files and parts
+    let filtered_prompt = filter_preprocessed_prompt(&preprocessed_prompt, &parts_to_edit)?;
+
+    // Log the filtered prompt for debugging
+    log::debug!("Filtered Preprocessed Prompt:\n{}", filtered_prompt);
+
+    let response = loop {
+        match deepseek_api
+            .call_deepseek_code_assistant(
+                &config.system_prompt,
+                &filtered_prompt,
                 &output_file_text,
                 config.temperature,
             )
@@ -460,6 +579,62 @@ async fn main() -> Result<(), AppError> {
     display_manager.print_footer(saved_files, start_time.elapsed());
 
     Ok(())
+}
+
+/// Parses the `<parts_to_edit>` section of the preprocessed prompt and returns a HashMap
+/// mapping file paths to their associated part IDs.
+fn parse_parts_to_edit(preprocessed_prompt: &str) -> Result<HashMap<String, Vec<usize>>, AppError> {
+    let mut reader = Reader::from_str(preprocessed_prompt);
+    reader.config_mut().trim_text(true);
+
+    let mut parts_to_edit = HashMap::new();
+    let mut buf = Vec::new();
+    let mut current_path = None;
+    let mut current_parts = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"file" {
+                    // Extract the "path" and "parts" attributes from the <file> tag
+                    for attr in e.attributes().with_checks(false) {
+                        if let Ok(attr) = attr {
+                            match attr.key.as_ref() {
+                                b"path" => {
+                                    current_path = Some(attr.unescape_value()?.into_owned());
+                                }
+                                b"parts" => {
+                                    let parts_str = attr.unescape_value()?;
+                                    current_parts = parts_str
+                                        .split(',')
+                                        .filter_map(|s| s.parse::<usize>().ok())
+                                        .collect();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"file" {
+                    // Store the file path and its associated part IDs
+                    if let Some(path) = current_path.take() {
+                        parts_to_edit.insert(path, current_parts.clone());
+                    }
+                    current_parts.clear();
+                }
+            }
+            Ok(Event::Eof) => break, // End of XML
+            Err(e) => {
+                return Err(AppError::XmlError(e));
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(parts_to_edit)
 }
 
 fn get_files_to_press(paths: &[String], ignore_paths: &[String]) -> Vec<PathBuf> {

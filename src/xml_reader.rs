@@ -1,8 +1,7 @@
-// src/xml_reader.rs
-
 use crate::AppError;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio;
 
@@ -41,6 +40,17 @@ impl<'a> XmlReader<'a> {
                 if attr.key.as_ref() == b"path" {
                     let value = attr.unescape_value()?;
                     self.current_path = Some(value.into_owned());
+                } else if attr.key.as_ref() == b"parts" {
+                    // Handle the "parts" attribute in <file> tags within <parts_to_edit>
+                    let value = attr.unescape_value()?;
+                    let part_ids: Vec<u32> = value
+                        .split(',')
+                        .filter_map(|s| s.parse::<u32>().ok())
+                        .collect();
+                    self.current_parts = part_ids
+                        .into_iter()
+                        .map(|id| (id as usize, String::new()))
+                        .collect();
                 }
             }
         }
@@ -98,6 +108,16 @@ impl<'a> XmlReader<'a> {
                         self.current_parts.clear();
                         // We always keep one "part" open for <response> content
                         self.current_parts.push((0, String::new()));
+                    }
+                    b"parts_to_edit" => {
+                        // Start of <parts_to_edit> - reset state
+                        self.current_path = None;
+                        self.current_parts.clear();
+                    }
+                    b"preprocessor_prompt" => {
+                        // Start of <preprocessor_prompt> - reset state
+                        self.current_path = None;
+                        self.current_parts.clear();
                     }
                     _ => (),
                 },
@@ -175,6 +195,27 @@ impl<'a> XmlReader<'a> {
                             tokio::fs::write(&file_path, new_content.as_bytes()).await?;
                             saved_files += 1;
                         }
+                    }
+                    b"parts_to_edit" => {
+                        // End of <parts_to_edit> - store the extracted file paths and part IDs
+                        if let Some(path) = self.current_path.take() {
+                            let part_ids = self
+                                .current_parts
+                                .iter()
+                                .map(|(id, _)| *id)
+                                .collect::<Vec<usize>>();
+                            println!("File: {}, Parts to edit: {:?}", path, part_ids);
+                        }
+                    }
+                    b"preprocessor_prompt" => {
+                        // End of <preprocessor_prompt> - store the extracted prompt
+                        let prompt = self
+                            .current_parts
+                            .drain(..)
+                            .map(|(_, content)| content)
+                            .collect::<Vec<String>>()
+                            .join("\n");
+                        println!("Preprocessor Prompt: {}", prompt);
                     }
                     b"response" => {
                         // End of <response> - store in "response.txt"
