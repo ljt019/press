@@ -2,6 +2,7 @@ mod api;
 mod cli;
 mod errors;
 mod file_processing;
+mod models;
 mod utils;
 
 use crate::utils::logger;
@@ -10,10 +11,13 @@ use clap::Parser;
 use cli::args::Args;
 use cli::args::Commands;
 use errors::AppError;
-use file_processing::{reader, writer, xml_parser};
+use file_processing::reader::{FileChunks, FilePart};
+use file_processing::{reader, writer};
 use log;
+use models::code_assistant_response::{CodeAssistantResponse, NewFile, UpdatedFile};
+use models::preprocessor_response::PreprocessorResponse;
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio;
@@ -101,17 +105,41 @@ async fn main() -> Result<(), AppError> {
         }
     };
 
-    // Use XmlReader to parse and filter the preprocessed prompt
-    let mut preprocessor_xml_parser = xml_parser::XmlParser::new(&preprocessed_prompt);
-    let parts_to_edit = preprocessor_xml_parser.parse_parts_to_edit(&preprocessed_prompt)?;
+    // Parse the preprocessor response using the new type
+    let preprocessor_response: PreprocessorResponse =
+        serde_json::from_str(&preprocessed_prompt).expect("Failed to parse preprocessor response");
 
-    log::debug!("Parts to Edit: {:?}", parts_to_edit);
-    log::debug!("Output File Text: {}", output_file_text);
+    log::debug!(
+        "Preprocessor Response - Parts to Edit: {:?}",
+        preprocessor_response.parts_to_edit
+    );
+    log::debug!(
+        "Preprocessor Response - Prompt: {}",
+        preprocessor_response.preprocessor_prompt
+    );
 
-    let filtered_prompt =
-        preprocessor_xml_parser.filter_preprocessed_prompt(&output_file_text, &parts_to_edit)?;
+    // Create a hashmap of parts to edit
+    let parts_to_edit = preprocessor_response.parts_to_edit;
 
-    log::debug!("Filtered Preprocessed Prompt:\n{}", filtered_prompt);
+    let mut parts_to_edit_hashmap: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    for file in parts_to_edit {
+        let file_path = file.file_path;
+        // turn each part in file.parts from "1" to 1 usize
+        let parts: Vec<usize> = file
+            .parts
+            .iter()
+            .map(|part| part.parse::<usize>().unwrap())
+            .collect();
+
+        parts_to_edit_hashmap.insert(file_path, parts);
+    }
+
+    // Use the parsed response to filter the preprocessed prompt
+    let filtered_prompt = filter_out_unused_parts(&output_file_text, &parts_to_edit_hashmap);
+
+    log::debug!("Filtered Preprocessed Prompt:\n{:?}", filtered_prompt);
 
     display_manager.stop_spinner();
     display_manager.print_preprocessor_response_success();
@@ -140,23 +168,106 @@ async fn main() -> Result<(), AppError> {
         }
     };
 
+    let code_assistant_response: CodeAssistantResponse =
+        serde_json::from_str(&response).expect("Failed to parse code assistant response");
+
     display_manager.stop_spinner();
     display_manager.print_code_assistant_response_success();
     display_manager.print_saving_results_start();
 
-    let mut code_assistant_xml_parser = xml_parser::XmlParser::new(&response);
-
     let press_output_dir = output_directory.join("press.output");
     tokio::fs::create_dir_all(&press_output_dir).await?;
 
-    let saved_files = code_assistant_xml_parser
-        .process_file(&directory_files, &press_output_dir, args.auto, chunk_size)
-        .await?;
+    // Process the code assistant response
+    let saved_files = process_code_assistant_response(
+        &code_assistant_response,
+        &directory_files,
+        &press_output_dir,
+        args.auto,
+        chunk_size,
+    )
+    .await?;
 
     display_manager.print_saving_results_success(args.auto);
     display_manager.print_footer(0, saved_files, start_time.elapsed());
 
     Ok(())
+}
+
+/// Processes the `CodeAssistantResponse` to save updated files, create new files, and write the response text.
+async fn process_code_assistant_response(
+    response: &CodeAssistantResponse,
+    original_paths: &[PathBuf],
+    output_directory: &Path,
+    auto: bool,
+    chunk_size: usize,
+) -> Result<usize, AppError> {
+    let mut saved_files = 0;
+
+    // Process updated files
+    for updated_file in &response.updated_files {
+        let fallback = PathBuf::from(&updated_file.file_path);
+        let original_file_path = original_paths
+            .iter()
+            .find(|p| p.to_string_lossy().ends_with(&updated_file.file_path))
+            .unwrap_or(&fallback);
+
+        let original_content = tokio::fs::read_to_string(&original_file_path).await?;
+
+        let lines: Vec<&str> = original_content.lines().collect();
+        let mut parts: Vec<String> = if chunk_size == 0 {
+            vec![original_content]
+        } else {
+            lines
+                .chunks(chunk_size)
+                .map(|chunk| chunk.join("\n"))
+                .collect()
+        };
+
+        for part in &updated_file.parts {
+            // Parse `part.part_id` into `usize`
+            let part_id: usize = part.part_id;
+
+            // Compare `part_id` with `parts.len()`
+            if part_id > 0 && part_id <= parts.len() {
+                parts[part_id - 1] = part.content.clone();
+            }
+        }
+
+        let new_content = parts.join("\n");
+
+        let output_file_path = if auto {
+            original_file_path.to_path_buf()
+        } else {
+            output_directory.join("code").join(&updated_file.file_path)
+        };
+
+        if let Some(parent) = output_file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        tokio::fs::write(&output_file_path, new_content.as_bytes()).await?;
+        saved_files += 1;
+    }
+
+    // Process new files
+    for new_file in &response.new_files {
+        let file_path = PathBuf::from(&new_file.file_path);
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&file_path, new_file.content.as_bytes()).await?;
+        saved_files += 1;
+    }
+
+    // Write the response text
+    if !response.response.is_empty() {
+        let response_txt_path = output_directory.join("response.txt");
+        tokio::fs::create_dir_all(output_directory).await?;
+        tokio::fs::write(&response_txt_path, response.response.as_bytes()).await?;
+    }
+
+    Ok(saved_files)
 }
 
 async fn handle_subcommands(command: Option<Commands>) -> Result<(), AppError> {
@@ -255,4 +366,45 @@ async fn handle_model_config_subcommand(
 
     write_config(&config)?;
     Ok(())
+}
+
+///  Filters out parts of `FileChunks` that are not specified in `parts_to_edit_hashmap`.
+///
+///  Args:
+///     output_file_text: A vector of `FileChunks` containing file paths and their parts.
+///     parts_to_edit_hashmap: A hashmap where the key is the file path and the value is a vector of part IDs to keep.
+///
+///  Returns:
+///     A vector of `FileChunks` containing only the parts specified in `parts_to_edit_hashmap`.
+///
+fn filter_out_unused_parts(
+    output_file_text: &Vec<FileChunks>,
+    parts_to_edit_hashmap: &std::collections::HashMap<String, Vec<usize>>,
+) -> Vec<FileChunks> {
+    let mut filtered_output_file_text: Vec<FileChunks> = Vec::new();
+
+    for file_chunk in output_file_text {
+        let file_path = &file_chunk.file_path;
+
+        // Check if the file path exists in the hashmap
+        if let Some(parts_to_edit) = parts_to_edit_hashmap.get(file_path) {
+            // Filter the parts to keep only those specified in parts_to_edit
+            let filtered_parts: Vec<FilePart> = file_chunk
+                .parts
+                .iter()
+                .filter(|part| parts_to_edit.contains(&part.part_id))
+                .cloned()
+                .collect();
+
+            // If there are parts to keep, add the file to the result
+            if !filtered_parts.is_empty() {
+                filtered_output_file_text.push(FileChunks {
+                    file_path: file_path.clone(),
+                    parts: filtered_parts,
+                });
+            }
+        }
+    }
+
+    filtered_output_file_text
 }

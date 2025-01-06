@@ -1,6 +1,5 @@
-// src/deep_seek_api/client.rs
-
 use super::{config, errors::DeepSeekError};
+use crate::file_processing::reader::FileChunks; // Import the FileChunks type
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::io::Write;
@@ -27,11 +26,14 @@ impl DeepSeekApi {
         &self,
         user_system_prompt: &str,
         user_prompt: &str,
-        file_content: &str,
+        file_chunks: &Vec<FileChunks>,
         temperature: f32,
         output_directory: String,
     ) -> Result<String, DeepSeekError> {
         log::debug!("Calling DeepSeek preprocessor API");
+
+        // Serialize FileChunks to JSON
+        let file_content = serde_json::to_string(&file_chunks)?;
 
         let final_prompt =
             format!(
@@ -59,11 +61,14 @@ impl DeepSeekApi {
         &self,
         user_system_prompt: &str,
         user_prompt: &str,
-        file_content: &str,
+        file_chunks: &Vec<FileChunks>, // Use FileChunks instead of raw string
         temperature: f32,
         output_directory: String,
     ) -> Result<String, DeepSeekError> {
         log::debug!("Calling DeepSeek code editor API");
+
+        // Serialize FileChunks to JSON
+        let file_content = serde_json::to_string(&file_chunks)?;
 
         let final_prompt =
             format!(
@@ -103,6 +108,9 @@ impl DeepSeekApi {
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": 8192,
+                "response_format": {
+                    "type": "json_object"
+                },
             }))
             .send()
             .await?;

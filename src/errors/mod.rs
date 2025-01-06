@@ -1,5 +1,4 @@
 use crate::api::errors::DeepSeekError;
-use quick_xml;
 use std::fmt;
 use toml;
 
@@ -7,8 +6,8 @@ use toml;
 pub enum AppError {
     IoError(std::io::Error),
     DeepSeekError(DeepSeekError),
-    XmlError(quick_xml::Error),
     TomlError(toml::de::Error),
+    InvalidPartId(String),
     MissingPrompt,
     MissingApiKey,
     RollbackError(String),
@@ -20,9 +19,9 @@ impl fmt::Display for AppError {
         match self {
             AppError::IoError(e) => write!(f, "IO error: {}", e),
             AppError::DeepSeekError(e) => write!(f, "DeepSeek API error: {}", e),
-            AppError::XmlError(e) => write!(f, "XML parsing error: {}", e),
             AppError::TomlError(e) => write!(f, "TOML parsing error: {}", e),
             AppError::MissingPrompt => write!(f, "Prompt is required"),
+            AppError::InvalidPartId(e) => write!(f, "Invalid part ID: {}", e),
             AppError::MissingApiKey => write!(f, "API key is required"),
             AppError::RollbackError(e) => write!(f, "Rollback error: {}", e),
             AppError::InvalidInput(e) => write!(f, "Invalid input: {}", e),
@@ -51,11 +50,5 @@ impl From<toml::de::Error> for AppError {
 impl From<DeepSeekError> for AppError {
     fn from(err: DeepSeekError) -> Self {
         AppError::DeepSeekError(err)
-    }
-}
-
-impl From<quick_xml::Error> for AppError {
-    fn from(err: quick_xml::Error) -> Self {
-        AppError::XmlError(err)
     }
 }

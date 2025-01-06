@@ -1,26 +1,39 @@
 use crate::errors::AppError;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileChunks {
+    pub file_path: String,
+    pub parts: Vec<FilePart>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FilePart {
+    pub part_id: usize,
+    pub content: String,
+}
+
 /// Maximum allowed file size (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-/// Reads and combines text files into a single string.
+/// Reads and combines text files into a vector of `FileChunks`.
 pub async fn combine_text_files(
     paths: Vec<PathBuf>,
     chunk_size: usize,
-) -> Result<String, AppError> {
-    let mut combined = String::new();
+) -> Result<Vec<FileChunks>, AppError> {
+    let mut file_chunks_list = Vec::new();
     for path in paths {
-        let file_content = read_and_format_file(&path, chunk_size).await?;
-        combined.push_str(&file_content);
+        let file_chunks = read_and_format_file(&path, chunk_size).await?;
+        file_chunks_list.push(file_chunks);
     }
-    Ok(combined)
+    Ok(file_chunks_list)
 }
 
-/// Reads and formats a single file into XML-like chunks.
-async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, AppError> {
+/// Reads a file and splits it into chunks.
+async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<FileChunks, AppError> {
     // Check file size
     let metadata = fs::metadata(path).await?;
     if metadata.len() > MAX_FILE_SIZE {
@@ -34,27 +47,24 @@ async fn read_and_format_file(path: &Path, chunk_size: usize) -> Result<String, 
     // Read file content
     let contents = fs::read_to_string(path).await?;
     let lines: Vec<&str> = contents.lines().collect();
-    let num_parts = (lines.len() + chunk_size - 1) / chunk_size; // Ceiling division
 
-    let path = path.to_str().unwrap();
+    // Split file content into chunks
+    let parts = lines
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(part_id, chunk)| FilePart {
+            part_id: part_id + 1,
+            content: chunk.join("\n"),
+        })
+        .collect();
 
-    // Format file content into XML-like chunks
-    let mut file_content = format!("<file path=\"{}\" parts=\"{}\">\n", path, num_parts);
-    for (part_id, chunk) in lines.chunks(chunk_size).enumerate() {
-        let part_content = escape_cdata(chunk.join("\n"));
-        file_content.push_str(&format!(
-            "<part id=\"{}\"><![CDATA[{}]]></part>\n",
-            part_id + 1,
-            part_content
-        ));
-    }
-    file_content.push_str("</file>\n");
-    Ok(file_content)
-}
+    // Create FileChunks struct
+    let file_chunks = FileChunks {
+        file_path: path.to_str().unwrap().to_string(),
+        parts,
+    };
 
-/// Escapes "]]>" in file content to avoid breaking CDATA sections.
-fn escape_cdata(content: String) -> String {
-    content.replace("]]>", "]]]]><![CDATA[>")
+    Ok(file_chunks)
 }
 
 /// Gets a list of files to process, filtering out ignored paths.
