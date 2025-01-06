@@ -1,20 +1,8 @@
 use crate::errors::AppError;
-use serde::{Deserialize, Serialize};
+use crate::models::{FileChunks, FilePart};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FileChunks {
-    pub file_path: String,
-    pub parts: Vec<FilePart>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FilePart {
-    pub part_id: usize,
-    pub content: String,
-}
 
 /// Maximum allowed file size (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;

@@ -5,13 +5,13 @@ mod file_processing;
 mod models;
 mod utils;
 
+use crate::models::{FileChunks, FilePart};
 use crate::utils::logger;
 use api::client::DeepSeekApi;
 use clap::Parser;
 use cli::args::Args;
 use cli::args::Commands;
 use errors::AppError;
-use file_processing::reader::{FileChunks, FilePart};
 use file_processing::{reader, writer};
 use log;
 use models::code_assistant_response::CodeAssistantResponse;

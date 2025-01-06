@@ -1,3 +1,4 @@
+use super::FilePart;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -16,11 +17,5 @@ pub struct UpdatedFile {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NewFile {
     pub file_path: String,
-    pub content: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FilePart {
-    pub part_id: usize,
     pub content: String,
 }

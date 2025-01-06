@@ -1,5 +1,5 @@
 use super::{config, errors::DeepSeekError};
-use crate::file_processing::reader::FileChunks; // Import the FileChunks type
+use crate::models::FileChunks; // Import the FileChunks type
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::io::Write;
