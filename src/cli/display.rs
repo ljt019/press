@@ -16,7 +16,7 @@ impl CliDisplayManager {
     /// Prints the application header.
     pub fn print_header(&self) {
         println!("\n{}", "╭──────────────────────╮".bright_magenta());
-        println!("{}", "│  🍇 Press v0.7.0     │".bright_magenta().bold());
+        println!("{}", "│  🍇 Press v0.7.1     │".bright_magenta().bold());
         println!("{}\n", "╰──────────────────────╯".bright_magenta());
     }
 
