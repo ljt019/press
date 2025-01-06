@@ -76,7 +76,7 @@ async fn main() -> Result<(), AppError> {
 
     let deepseek_api = DeepSeekApi::new(api_key);
 
-    display_manager.start_spinner();
+    display_manager.start_spinner_preprocessor();
 
     let mut retries = config.retries;
     let mut combined_prompt = prompt;
@@ -144,7 +144,7 @@ async fn main() -> Result<(), AppError> {
     display_manager.stop_spinner();
     display_manager.print_preprocessor_response_success();
 
-    display_manager.start_spinner();
+    display_manager.start_spinner_assistant();
 
     // Get code assistant response from DeepSeek API
     let response = loop {

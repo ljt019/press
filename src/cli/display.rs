@@ -16,7 +16,7 @@ impl CliDisplayManager {
     /// Prints the application header.
     pub fn print_header(&self) {
         println!("\n{}", "╭──────────────────────╮".bright_magenta());
-        println!("{}", "│  🍇 Press v0.6.0     │".bright_magenta().bold());
+        println!("{}", "│  🍇 Press v0.7.0     │".bright_magenta().bold());
         println!("{}\n", "╰──────────────────────╯".bright_magenta());
     }
 
@@ -81,13 +81,33 @@ impl CliDisplayManager {
     }
 
     /// Starts a spinner for ongoing operations.
-    pub fn start_spinner(&mut self) {
+    pub fn start_spinner_preprocessor(&mut self) {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
             ProgressStyle::with_template(&format!(
                 "   {} {{spinner}} {}",
                 "→".bright_white(),
-                "Waiting for AI response".italic().bright_white()
+                "Waiting for 'Preprocessor' response"
+                    .italic()
+                    .bright_white()
+            ))
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        spinner.enable_steady_tick(Duration::from_millis(80));
+        self.spinner = Some(spinner);
+    }
+
+    /// Starts a spinner for ongoing operations.
+    pub fn start_spinner_assistant(&mut self) {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::with_template(&format!(
+                "   {} {{spinner}} {}",
+                "→".bright_white(),
+                "Waiting for 'Code Assistant' response"
+                    .italic()
+                    .bright_white()
             ))
             .unwrap()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
