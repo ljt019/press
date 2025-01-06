@@ -179,7 +179,7 @@ async fn main() -> Result<(), AppError> {
     tokio::fs::create_dir_all(&press_output_dir).await?;
 
     // Process the code assistant response
-    let saved_files = process_code_assistant_response(
+    let (saved_files, new_files) = process_code_assistant_response(
         &code_assistant_response,
         &directory_files,
         &press_output_dir,
@@ -189,7 +189,7 @@ async fn main() -> Result<(), AppError> {
     .await?;
 
     display_manager.print_saving_results_success(args.auto);
-    display_manager.print_footer(0, saved_files, start_time.elapsed());
+    display_manager.print_footer(new_files, saved_files, start_time.elapsed());
 
     Ok(())
 }
@@ -201,8 +201,9 @@ async fn process_code_assistant_response(
     output_directory: &Path,
     auto: bool,
     chunk_size: usize,
-) -> Result<usize, AppError> {
+) -> Result<(usize, usize), AppError> {
     let mut saved_files = 0;
+    let mut new_files = 0;
 
     // Process updated files
     for updated_file in &response.updated_files {
@@ -257,7 +258,7 @@ async fn process_code_assistant_response(
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::write(&file_path, new_file.content.as_bytes()).await?;
-        saved_files += 1;
+        new_files += 1;
     }
 
     // Write the response text
@@ -267,7 +268,7 @@ async fn process_code_assistant_response(
         tokio::fs::write(&response_txt_path, response.response.as_bytes()).await?;
     }
 
-    Ok(saved_files)
+    Ok((saved_files, new_files))
 }
 
 async fn handle_subcommands(command: Option<Commands>) -> Result<(), AppError> {
