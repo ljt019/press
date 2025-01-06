@@ -11,6 +11,7 @@ pub enum AppError {
     MissingPrompt,
     MissingApiKey,
     RollbackError(String),
+    CheckpointError(String),
     InvalidInput(String),
 }
 
@@ -24,6 +25,7 @@ impl fmt::Display for AppError {
             AppError::InvalidPartId(e) => write!(f, "Invalid part ID: {}", e),
             AppError::MissingApiKey => write!(f, "API key is required"),
             AppError::RollbackError(e) => write!(f, "Rollback error: {}", e),
+            AppError::CheckpointError(e) => write!(f, "Checkpoint error: {}", e),
             AppError::InvalidInput(e) => write!(f, "Invalid input: {}", e),
         }
     }

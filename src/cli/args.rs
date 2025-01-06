@@ -68,4 +68,15 @@ pub enum Commands {
 
     /// Rollback changes made by the last run.
     Rollback,
+
+    /// Create or revert to a checkpoint.
+    Checkpoint {
+        /// Paths to directories or files to checkpoint.
+        #[arg(short, long, num_args = 1.., value_delimiter = '&')]
+        paths: Vec<String>,
+
+        /// Revert to the last checkpoint.
+        #[arg(long)]
+        revert: bool,
+    },
 }

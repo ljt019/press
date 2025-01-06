@@ -105,3 +105,9 @@ struct RollbackConfig {
     new_files: Vec<String>,
     rollback_files: Vec<(String, String)>,
 }
+
+/// Configuration for checkpoint functionality.
+#[derive(Serialize, Deserialize)]
+pub struct CheckpointConfig {
+    pub checkpoint_files: Vec<(String, String)>,
+}

@@ -333,6 +333,9 @@ async fn handle_subcommands(command: Option<Commands>) -> Result<(), AppError> {
         }) => {
             handle_model_config_subcommand(set_api_key, set_system_prompt, set_temperature).await?;
         }
+        Some(Commands::Checkpoint { paths, revert }) => {
+            handle_checkpoint_subcommand(paths, revert).await?;
+        }
         None => {}
     }
 
@@ -398,10 +401,112 @@ async fn handle_model_config_subcommand(
 
     if let Some(temperature) = set_temperature {
         config.temperature = temperature;
-        println!("Temperature set to: {}", temperature);
     }
 
     write_config(&config)?;
+    Ok(())
+}
+
+use walkdir::WalkDir;
+
+async fn handle_checkpoint_subcommand(paths: Vec<String>, revert: bool) -> Result<(), AppError> {
+    let config = read_config()?;
+    let output_dir = Path::new(&config.output_directory).join("press.output");
+    tokio::fs::create_dir_all(&output_dir).await?;
+    let checkpoint_dir = output_dir.join(".checkpoint");
+
+    if revert {
+        if !checkpoint_dir.exists() {
+            return Err(AppError::CheckpointError(
+                "No checkpoint to revert to".to_string(),
+            ));
+        }
+
+        let checkpoint_config_path = checkpoint_dir.join("checkpoint.toml");
+        let checkpoint_config_str = tokio::fs::read_to_string(&checkpoint_config_path).await?;
+        let checkpoint_config: crate::file_processing::writer::CheckpointConfig =
+            toml::from_str(&checkpoint_config_str)
+                .map_err(|e| AppError::CheckpointError(e.to_string()))?;
+
+        for (original_path, backup_path) in checkpoint_config.checkpoint_files {
+            let original_path = Path::new(&original_path);
+            let backup_path = Path::new(&backup_path);
+            if backup_path.exists() {
+                if let Some(parent) = original_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::copy(backup_path, original_path).await?;
+                println!("Restored: {}", original_path.display());
+            }
+        }
+    } else {
+        if checkpoint_dir.exists() {
+            tokio::fs::remove_dir_all(&checkpoint_dir).await?;
+        }
+        tokio::fs::create_dir_all(&checkpoint_dir).await?;
+
+        let mut checkpoint_files = Vec::new();
+        let mut files_to_process = Vec::new();
+
+        // First, collect all files using WalkDir (synchronously, but very fast)
+        for path_str in paths {
+            let path = Path::new(&path_str);
+            if !path.exists() {
+                return Err(AppError::CheckpointError(format!(
+                    "Path does not exist: {}",
+                    path.display()
+                )));
+            }
+
+            if path.is_dir() {
+                for entry in WalkDir::new(path)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                {
+                    if entry.file_type().is_file() {
+                        files_to_process.push(entry.path().to_path_buf());
+                    }
+                }
+            } else {
+                files_to_process.push(path.to_path_buf());
+            }
+        }
+
+        // Then process all files using async operations
+        for file_path in files_to_process {
+            // Create a unique backup path that preserves the directory structure
+            let relative_path = file_path.strip_prefix(".").unwrap_or(&file_path);
+            let backup_path = checkpoint_dir.join(
+                relative_path
+                    .to_string_lossy()
+                    .to_string()
+                    .replace("\\", "_")
+                    .replace("/", "_"),
+            );
+
+            tokio::fs::copy(&file_path, &backup_path).await?;
+
+            checkpoint_files.push((
+                file_path.to_string_lossy().to_string(),
+                backup_path.to_string_lossy().to_string(),
+            ));
+
+            println!("Checkpointed: {}", file_path.display());
+        }
+
+        let checkpoint_config =
+            crate::file_processing::writer::CheckpointConfig { checkpoint_files };
+
+        let checkpoint_config_str = toml::to_string(&checkpoint_config)
+            .map_err(|e| AppError::CheckpointError(e.to_string()))?;
+        tokio::fs::write(
+            checkpoint_dir.join("checkpoint.toml"),
+            checkpoint_config_str,
+        )
+        .await?;
+    }
+
     Ok(())
 }
 
