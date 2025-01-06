@@ -9,5 +9,5 @@ pub struct PreprocessorResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FileParts {
     pub file_path: String,
-    pub parts: Vec<String>,
+    pub parts: Vec<usize>,
 }

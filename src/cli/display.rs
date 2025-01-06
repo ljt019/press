@@ -16,7 +16,7 @@ impl CliDisplayManager {
     /// Prints the application header.
     pub fn print_header(&self) {
         println!("\n{}", "╭──────────────────────╮".bright_magenta());
-        println!("{}", "│  🍇 Press v0.7.1     │".bright_magenta().bold());
+        println!("{}", "│  🍇 Press v0.7.2     │".bright_magenta().bold());
         println!("{}\n", "╰──────────────────────╯".bright_magenta());
     }
 
@@ -72,11 +72,26 @@ impl CliDisplayManager {
     }
 
     /// Prints the application footer.
-    pub fn print_footer(&self, created_files: usize, saved_files: usize, duration: Duration) {
+    pub fn print_footer(&self, new_files: usize, saved_files: usize, duration: Duration) {
         println!();
-        self.print_info(&format!("⚡ Created {} file(s)", created_files));
-        self.print_info(&format!("⚡ Modified {} file(s)", saved_files));
-        self.print_info(&format!("⚡ Completed in {:.2?}", duration));
+        println!(
+            "{}",
+            format!("⚡ Created {} file(s)", saved_files)
+                .bright_white()
+                .dimmed(),
+        );
+        println!(
+            "{}",
+            format!("⚡ Modified {} file(s)", saved_files)
+                .bright_white()
+                .dimmed(),
+        );
+        println!(
+            "{}",
+            format!("⚡ Completed in {:.2?}", duration)
+                .bright_white()
+                .dimmed(),
+        );
         println!();
     }
 

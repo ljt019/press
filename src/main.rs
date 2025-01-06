@@ -127,11 +127,7 @@ async fn main() -> Result<(), AppError> {
     for file in parts_to_edit {
         let file_path = file.file_path;
         // turn each part in file.parts from "1" to 1 usize
-        let parts: Vec<usize> = file
-            .parts
-            .iter()
-            .map(|part| part.parse::<usize>().unwrap())
-            .collect();
+        let parts: Vec<usize> = file.parts;
 
         parts_to_edit_hashmap.insert(file_path, parts);
     }

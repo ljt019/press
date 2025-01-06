@@ -35,7 +35,7 @@ You will respond in this JSON format only:
 
 /// Important text for the preprocessor.
 pub const PREPROCESSOR_IMPORTANT_TEXT: &str = "
-You will respond in this JSON format only:
+You will respond in this JSON format only, with part IDs as integers not strings:
 {
   'parts_to_edit': [
     {
