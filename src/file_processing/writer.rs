@@ -6,7 +6,7 @@ use toml;
 
 /// Rolls back changes made by the last run.
 pub async fn rollback_last_run(output_directory: &Path) -> Result<(), AppError> {
-    let rollback_dir = output_directory.join(".rollback");
+    let rollback_dir = output_directory.join("press.output/.rollback");
     if !rollback_dir.exists() {
         return Err(AppError::RollbackError(
             "No changes to rollback".to_string(),
