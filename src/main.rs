@@ -14,7 +14,7 @@ use errors::AppError;
 use file_processing::reader::{FileChunks, FilePart};
 use file_processing::{reader, writer};
 use log;
-use models::code_assistant_response::{CodeAssistantResponse, NewFile, UpdatedFile};
+use models::code_assistant_response::CodeAssistantResponse;
 use models::preprocessor_response::PreprocessorResponse;
 use std::{
     path::{Path, PathBuf},
@@ -194,7 +194,8 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Processes the `CodeAssistantResponse` to save updated files, create new files, and write the response text.
+/// Processes the `CodeAssistantResponse` to save updated files, create new files,
+/// and write the response text. We now call `save_rollback` before overwriting.
 async fn process_code_assistant_response(
     response: &CodeAssistantResponse,
     original_paths: &[PathBuf],
@@ -202,6 +203,39 @@ async fn process_code_assistant_response(
     auto: bool,
     chunk_size: usize,
 ) -> Result<(usize, usize), AppError> {
+    // Gather data for rollback
+    let mut new_files_for_rollback: Vec<String> = Vec::new();
+    let mut modified_files_for_rollback: Vec<(String, String)> = Vec::new();
+
+    // New files
+    for new_file in &response.new_files {
+        new_files_for_rollback.push(new_file.file_path.clone());
+    }
+
+    // Updated files
+    for updated_file in &response.updated_files {
+        let fallback = PathBuf::from(&updated_file.file_path);
+        let original_file_path = original_paths
+            .iter()
+            .find(|p| p.to_string_lossy().ends_with(&updated_file.file_path))
+            .unwrap_or(&fallback);
+
+        // We'll pass an empty string as the second tuple item; the writer saves the real backup path.
+        modified_files_for_rollback.push((
+            original_file_path.to_string_lossy().to_string(),
+            "".to_string(),
+        ));
+    }
+
+    // **Save rollback info BEFORE we overwrite or create any files.**
+    writer::save_rollback(
+        output_directory,
+        new_files_for_rollback.clone(),
+        modified_files_for_rollback.clone(),
+    )
+    .await?;
+
+    // Now, proceed with overwriting (updated) and creating (new) files.
     let mut saved_files = 0;
     let mut new_files = 0;
 
@@ -226,7 +260,7 @@ async fn process_code_assistant_response(
         };
 
         for part in &updated_file.parts {
-            // Parse `part.part_id` into `usize`
+            // Parse `part_id` into `usize`
             let part_id: usize = part.part_id;
 
             // Compare `part_id` with `parts.len()`
@@ -237,6 +271,8 @@ async fn process_code_assistant_response(
 
         let new_content = parts.join("\n");
 
+        // If --auto is used, overwrite the original file directly
+        // otherwise, put the updated file in output_directory/press.output/code/<file_path>
         let output_file_path = if auto {
             original_file_path.to_path_buf()
         } else {
@@ -261,7 +297,7 @@ async fn process_code_assistant_response(
         new_files += 1;
     }
 
-    // Write the response text
+    // Write the response text if present
     if !response.response.is_empty() {
         let response_txt_path = output_directory.join("response.txt");
         tokio::fs::create_dir_all(output_directory).await?;
