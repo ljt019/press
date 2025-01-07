@@ -16,6 +16,8 @@ use file_processing::{reader, writer};
 use log;
 use models::code_assistant_response::CodeAssistantResponse;
 use models::preprocessor_response::PreprocessorResponse;
+use similar::TextDiff;
+use std::io::Write;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -190,9 +192,12 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
+///
 /// Processes the `CodeAssistantResponse` to save updated files, create new files,
 /// and write the response text. We now call `save_rollback` before overwriting.
-async fn process_code_assistant_response(
+/// generates a unified diff (diff.patch) in `output_directory/press.output/`.**
+///
+pub async fn process_code_assistant_response(
     response: &CodeAssistantResponse,
     original_paths: &[PathBuf],
     output_directory: &Path,
@@ -202,6 +207,9 @@ async fn process_code_assistant_response(
     // Gather data for rollback
     let mut new_files_for_rollback: Vec<String> = Vec::new();
     let mut modified_files_for_rollback: Vec<(String, String)> = Vec::new();
+
+    // Vector to track pairs of (old_file_path, new_file_path) for diff generation
+    let mut updated_files_for_diff: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     // New files
     for new_file in &response.new_files {
@@ -281,6 +289,9 @@ async fn process_code_assistant_response(
 
         tokio::fs::write(&output_file_path, new_content.as_bytes()).await?;
         saved_files += 1;
+
+        // Record these paths so we can generate a diff later
+        updated_files_for_diff.push((original_file_path.to_path_buf(), output_file_path.clone()));
     }
 
     // Process new files
@@ -300,9 +311,53 @@ async fn process_code_assistant_response(
         tokio::fs::write(&response_txt_path, response.response.as_bytes()).await?;
     }
 
+    // --- Generate diffs only if we actually updated files (and only if you want to do so).
+    // If you only want diffs in "non-auto" mode, wrap this with if !auto { ... }
+    if !updated_files_for_diff.is_empty() {
+        generate_unified_diffs(&updated_files_for_diff, output_directory).await?;
+    }
+
     Ok((saved_files, new_files))
 }
 
+///
+/// Generates a unified diff for each `(old_file, new_file)` pair
+/// and writes them all to `output_directory/press.output/diff.patch`.
+///
+async fn generate_unified_diffs(
+    updated_files: &[(PathBuf, PathBuf)],
+    output_directory: &Path,
+) -> Result<(), AppError> {
+    // We'll store the final diff in output_directory/press.output/diff.patch
+    let patch_dir = output_directory;
+    tokio::fs::create_dir_all(&patch_dir).await?;
+
+    let patch_path = patch_dir.join("diff.patch");
+
+    // Use synchronous File for writing the patch
+    let mut patch_file = std::fs::File::create(&patch_path).expect("Failed to create diff.patch");
+
+    for (old_path, new_path) in updated_files {
+        // Safely read old file (if it doesn't exist, treat as empty)
+        let old_content = std::fs::read_to_string(old_path).unwrap_or_default();
+        // Read new file (also treat missing file as empty)
+        let new_content = std::fs::read_to_string(new_path).unwrap_or_default();
+
+        let diff = TextDiff::from_lines(&old_content, &new_content)
+            .unified_diff()
+            .context_radius(3) // optional
+            .header(
+                old_path.to_string_lossy().as_ref(),
+                new_path.to_string_lossy().as_ref(),
+            )
+            .to_string();
+
+        // Append this diff to the patch file (add a blank line if you prefer separate sections)
+        writeln!(patch_file, "{}", diff).expect("Failed to write diff.patch");
+    }
+
+    Ok(())
+}
 async fn handle_subcommands(command: Option<Commands>) -> Result<(), AppError> {
     match command {
         Some(Commands::Rollback) => {

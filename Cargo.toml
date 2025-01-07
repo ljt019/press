@@ -17,3 +17,4 @@ winapi = { version = "0.3", features = ["consoleapi", "wincon", "processenv", "w
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.7"
 walkdir = "2.5.0"
+similar = "2.6.0"
